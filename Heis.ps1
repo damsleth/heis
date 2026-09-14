@@ -32,10 +32,10 @@
     the relay task has to point at a file on disk.
 
 .EXAMPLE
-    .\Heis-Standalone.ps1              # elevate, unless already elevated
-    .\Heis-Standalone.ps1 -Status      # report and exit
-    .\Heis-Standalone.ps1 -Finish      # end the running session
-    .\Heis-Standalone.ps1 -Uninstall   # remove the relay task and the copy
+    .\Heis.ps1              # elevate, unless already elevated
+    .\Heis.ps1 -Status      # report and exit
+    .\Heis.ps1 -Finish      # end the running session
+    .\Heis.ps1 -Uninstall   # remove the relay task and the copy
 #>
 [CmdletBinding()]
 param(
@@ -50,7 +50,7 @@ param(
     # Resolve-SelfPath. Having a default here is what makes `irm <url> | iex`
     # work at all, since that form leaves a script no way to know its own text.
     # Point it at your own host if you serve a copy from somewhere else.
-    [string] $SourceUrl = 'https://raw.githubusercontent.com/damsleth/heis/main/Heis-Standalone.ps1',
+    [string] $SourceUrl = 'https://raw.githubusercontent.com/damsleth/heis/main/Heis.ps1',
 
     # Set when this instance is the one running inside the interactive session.
     # Not for humans.

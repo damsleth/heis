@@ -14,30 +14,39 @@ SSH (session 0)                     interactive session
 
 ## Just want to elevate? One file, nothing to install
 
-`Heis-Standalone.ps1` does the Admin By Request dance on its own — no
+`Heis.ps1` does the Admin By Request dance on its own — no
 AutoHotkey, no agent, no setup, no admin rights. Nothing to clone:
 
 ```powershell
-irm https://raw.githubusercontent.com/damsleth/heis/main/Heis-Standalone.ps1 | iex
+irm https://raw.githubusercontent.com/damsleth/heis/main/Heis.ps1 | iex
 ```
 
 `| iex` cannot pass arguments, so for anything but a plain elevate, make a
 script block:
 
 ```powershell
-$h = 'https://raw.githubusercontent.com/damsleth/heis/main/Heis-Standalone.ps1'
+$h = 'https://raw.githubusercontent.com/damsleth/heis/main/Heis.ps1'
 & ([scriptblock]::Create((irm $h))) -Status
 & ([scriptblock]::Create((irm $h))) -Finish
 ```
 
 Either way it writes a copy to `%LOCALAPPDATA%\Heis`, because the relay task
-needs a file on disk to point at. Or download it and run it:
+needs a file on disk to point at.
+
+To keep it somewhere you can find again, `Install.ps1` puts it beside your
+PowerShell profile:
 
 ```powershell
-.\Heis-Standalone.ps1              # elevate, unless already elevated
-.\Heis-Standalone.ps1 -Status
-.\Heis-Standalone.ps1 -Finish      # end the session
-.\Heis-Standalone.ps1 -Uninstall   # remove the relay task it registers
+irm https://raw.githubusercontent.com/damsleth/heis/main/Install.ps1 | iex
+```
+
+Or download it and run it:
+
+```powershell
+.\Heis.ps1              # elevate, unless already elevated
+.\Heis.ps1 -Status
+.\Heis.ps1 -Finish      # end the session
+.\Heis.ps1 -Uninstall   # remove the relay task it registers
 ```
 
 Works from the desktop and over SSH. Over SSH it relays itself into the
@@ -172,8 +181,9 @@ desktops are never guessed between; that refuses.
 | `Send-AhkCommand.ps1` | the client — runs anywhere, including SSH |
 | `Run-Macro.ps1` | launch an app and click through its dialogs |
 | `Install-AhkAgentTask.ps1` | start the agent on interactive logon |
-| `Heis-Standalone.ps1` | **the deliverable** — elevation in one file, no dependencies |
-| `heis.ps1` | the same thing built on the agent, kept as a worked example |
+| `Heis.ps1` | **the deliverable** — elevation in one file, no dependencies |
+| `Install.ps1` | copies `Heis.ps1` next to your PowerShell profile |
+| `heis_ahk.ps1` | the same thing built on the agent, kept as a worked example |
 | `HEADLESS-SETUP.md` | running unattended, and the limits |
 | `AGENTS.md` | notes for whoever works on this next |
 

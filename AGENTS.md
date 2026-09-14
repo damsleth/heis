@@ -149,7 +149,7 @@ Works with no input desktop at all: `run`, `windows`, `win-pos`,
 - RDP resolution and DPI change under a running agent as the client window is
   resized or moved between displays. Never cache geometry.
 
-## Heis-Standalone.ps1
+## Heis.ps1
 
 The single-file version, with no AutoHotkey and no resident agent. Two traps
 cost real time and are easy to reintroduce:
