@@ -19,9 +19,23 @@
     Electron, Chromium). Nothing here will reach it, and the macro has to run
     with someone connected.
 
+    -Arguments is passed to the program verbatim - write it exactly as you would
+    type it on a command line, and quote anything containing spaces. Nothing is
+    added or rewritten on the way through.
+
+    A caveat specific to switches like /Elevate: this agent runs unelevated, so
+    it can neither answer a UAC consent prompt (that appears on the secure
+    desktop, where nothing can reach it) nor drive the windows of a process that
+    ends up elevated - UIPI blocks both injected input and posted messages from
+    a lower integrity level. Check with `active-window` once the app is up: if
+    it reports elevated=YES, the agent itself has to run elevated, which means
+    re-registering its task with -RunLevel Highest.
+
 .EXAMPLE
     .\Run-Macro.ps1 -Exe notepad.exe
     .\Run-Macro.ps1 -Exe C:\app\thing.exe -ConfirmWindow 'Confirm Action' -ConfirmButton Yes
+    .\Run-Macro.ps1 -Exe C:\app\thing.exe -Arguments '/Elevate'
+    .\Run-Macro.ps1 -Exe C:\app\thing.exe -Arguments '/Elevate "C:\some path\x.txt"'
 #>
 [CmdletBinding()]
 param(

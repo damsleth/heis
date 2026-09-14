@@ -179,10 +179,17 @@ $agent = $candidates[0]
 
 # Ready is the agent's probe result, not a guess from the desktop name: it has
 # actually tried to move the cursor and watched whether it went anywhere. Warn
-# rather than refuse - read-only commands (status, probe-input) and
-# window-message ones (activate) still work, and the agent rejects the rest with
-# a precise error, so there is nothing to gain by second-guessing it here.
-if (-not $agent.Ready) {
+# rather than refuse - the agent rejects the rest with a precise error, so there
+# is nothing to gain by second-guessing it here.
+#
+# Only for commands that actually inject input. Everything else - reading
+# windows, pressing buttons by message, asking what has focus - works fine
+# without an input desktop, and warning about all of them buries the one case
+# that matters in noise nobody reads.
+$verb = ($Command | Select-Object -First 1)
+$needsInput = $verb -in @('click-icon', 'preview-icon', 'send', 'control-send')
+
+if ($needsInput -and -not $agent.Ready) {
     # Deliberately does not guess the cause. The common one is not the obvious
     # one: an elevated foreground window blocks injection via UIPI while the
     # session is connected, unlocked and in every visible respect fine. Saying

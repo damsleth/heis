@@ -645,7 +645,19 @@ DesktopAvailable() => InputDesktopRaw() = "Default"
 InputUsable(force := false) {
     static key := "", ok := false
 
-    k := InputDesktopRaw() "|" (IsConsoleSession() ? 1 : 0)
+    ; The foreground window's elevation is part of the key, because UIPI
+    ; blocking depends on what is in front rather than on the desktop. Without
+    ; it a probe taken behind an elevated window stays cached as "not usable"
+    ; long after focus moved somewhere harmless, and every later command is
+    ; refused for a reason that stopped being true.
+    ;
+    ; Keyed on elevation and not on the window or process, so switching between
+    ; ordinary windows does not re-probe - a probe twitches the cursor, and
+    ; doing that on every alt-tab would be its own bug.
+    fg := ""
+    try fg := IsProcessElevated(WinGetPID(WinExist("A")))
+
+    k := InputDesktopRaw() "|" (IsConsoleSession() ? 1 : 0) "|" fg
     if (!force && k = key)
         return ok
 
