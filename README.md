@@ -1,0 +1,123 @@
+# ahk — drive a Windows desktop from SSH
+
+An SSH shell on Windows lands in session 0, which has no desktop. Nothing it
+does can reach the screen. This repo closes that gap: a resident AutoHotkey
+agent runs inside the interactive session and executes commands dropped into a
+file queue, so an SSH shell — or Claude Code running over one — can drive the
+desktop it cannot touch directly.
+
+```
+SSH (session 0)                     interactive session
+  Send-AhkCommand.ps1  --queue/-->  taskbar-click.ahk  --> the desktop
+                       <--done/---
+```
+
+## Quick start
+
+```powershell
+.\Install-AhkAgentTask.ps1          # start the agent on interactive logon
+.\Send-AhkCommand.ps1 -List         # who is live, and can they receive input
+.\Send-AhkCommand.ps1 status
+```
+
+Click through an app's dialogs, without coordinates, without anyone connected:
+
+```powershell
+.\Run-Macro.ps1 -Exe C:\app\thing.exe `
+                -ConfirmWindow 'Confirm Action' -ConfirmButton Yes `
+                -OkWindow 'Result' -OkButton OK
+```
+
+## The one thing to understand
+
+Two kinds of automation, and they fail in completely different places.
+
+| | mechanism | works when disconnected |
+| --- | --- | --- |
+| `click-icon`, `send` | `SendInput` | **no** |
+| `press-text`, `control-settext`, `run`, `wait-window` | window messages | **yes** |
+
+Synthetic input reaches only the session's live input desktop. Lock the
+session, disconnect RDP, or park it on a console and it goes nowhere — and
+Windows reports success the whole time. Window messages do not care.
+
+So: **build macros out of the message-based verbs.** They work whether or not
+anyone is watching, and they address buttons by the caption a person reads
+rather than by a coordinate, which means they also survive the session changing
+resolution, DPI or monitor. Keep `click-icon` and `send` for the taskbar and
+for things that genuinely need real input, and expect them only to work while
+someone is connected.
+
+`HEADLESS-SETUP.md` covers what survives a disconnect, how it was measured, and
+what is and is not possible on a Windows 365 Cloud PC.
+
+## Commands
+
+Send any of these with `.\Send-AhkCommand.ps1 <command>`. Multi-part arguments
+are separated with `|`.
+
+**Diagnostics**
+
+| command | |
+| --- | --- |
+| `ping` | is the agent alive |
+| `status` | session, desktop, screen, DPI, taskbar geometry |
+| `probe-input` | does synthetic input actually land — by experiment, not by name |
+| `mouse-pos` | cursor position and the window under it |
+
+**Finding things**
+
+| command | |
+| --- | --- |
+| `windows [hidden]` | visible windows, or everything |
+| `win-pos <win>` | position and size |
+| `control-list <win>` | control names |
+| `buttons <win>` | control names **with their captions** — start here |
+
+**Acting — message-based, works headless**
+
+| command | |
+| --- | --- |
+| `run <command>` | launch a program |
+| `wait-window <win> \| <secs>` | block until it appears |
+| `press-text <win> \| <caption>` | press a button by what it says |
+| `control-press <win> \| <ctl>` | `BM_CLICK` a button by name |
+| `control-click <win> \| <ctl>` | post a click to a control |
+| `control-settext <win> \| <ctl> \| <text>` | set text exactly |
+| `control-text <win> \| <ctl>` | read text |
+| `activate <win>` | bring to front |
+
+**Acting — synthetic input, connected only**
+
+| command | |
+| --- | --- |
+| `click-icon [n]` | click the nth taskbar icon |
+| `preview-icon [n]` | move there without clicking |
+| `send <keys>` | send keystrokes |
+| `control-send <win> \| <ctl> \| <keys>` | unreliable headless — prefer `control-settext` |
+
+**Lifecycle:** `reload`, `exit`. Hotkeys in the session: `F8` preview, `F9`
+click, `F10` inspect cursor, `F12` reload, `Ctrl+Alt+Q` exit.
+
+## Targeting
+
+Agents advertise themselves in `agents/<session>.json`. With more than one live,
+an unqualified command prefers a usable desktop, then the remote one over the
+console — so a macro you debug over RDP runs unattended unchanged. Pin it with
+`-Rdp`, `-Console`, `-Session <n>` or `-User <name>`. Two different people's
+desktops are never guessed between; that refuses.
+
+## Files
+
+| | |
+| --- | --- |
+| `taskbar-click.ahk` | the agent — runs in the interactive session |
+| `Send-AhkCommand.ps1` | the client — runs anywhere, including SSH |
+| `Run-Macro.ps1` | launch an app and click through its dialogs |
+| `Install-AhkAgentTask.ps1` | start the agent on interactive logon |
+| `Install-ConsoleReattachTask.ps1` | reattach to console on disconnect (needs admin; see caveats) |
+| `Reattach-ConsoleSession.ps1` | what that task runs |
+| `HEADLESS-SETUP.md` | running unattended, and the limits |
+| `AGENTS.md` | notes for whoever works on this next |
+
+`agents/`, `queue/` and `logs/` are runtime state and are not tracked.
