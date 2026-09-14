@@ -183,16 +183,13 @@ $agent = $candidates[0]
 # window-message ones (activate) still work, and the agent rejects the rest with
 # a precise error, so there is nothing to gain by second-guessing it here.
 if (-not $agent.Ready) {
-    if ($agent.Console) {
-        # Reached via tscon on a Cloud PC: the console reports a perfectly
-        # healthy Default desktop and silently discards everything sent to it.
-        $why = 'it is attached to the console, which accepts input and discards it'
-        $fix = 'Reconnect over RDP; tscon cannot fix this one.'
-    } else {
-        $why = 'it is locked or disconnected'
-        $fix = 'Reconnect over RDP.'
-    }
-    Write-Warning "Session $($agent.Session) cannot receive synthetic input - $why. Click/send will be refused. $fix"
+    # Deliberately does not guess the cause. The common one is not the obvious
+    # one: an elevated foreground window blocks injection via UIPI while the
+    # session is connected, unlocked and in every visible respect fine. Saying
+    # "locked or disconnected" there sends people off debugging the session.
+    Write-Warning ("Session $($agent.Session) cannot receive synthetic input; click/send will be refused. " +
+                   "Ask why:  .\Send-AhkCommand.ps1 active-window  - an elevated window in front blocks " +
+                   "injection even on a perfectly healthy session.")
 }
 
 $text = ($Command -join ' ').Trim()

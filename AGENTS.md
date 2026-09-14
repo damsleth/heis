@@ -49,7 +49,27 @@ indicator can say fine while input goes nowhere:
 - `OpenInputDesktop` succeeds, desktop is `Default`
 - `SendInput` returns 1 — it reports inserting the event
 
-...and the cursor does not move. Measured on a Windows 365 Cloud PC console.
+...and the cursor does not move.
+
+**The usual cause is UIPI, not the session.** An elevated foreground window
+blocks injection from this medium-integrity agent, silently. Reproduced by
+toggling focus: elevated console in front → `landed=NO`; taskbar in front →
+`landed=yes`. So when input "stops working", check `active-window` *before*
+suspecting the session. The agent cannot recover on its own either — UIPI blocks
+`SetForegroundWindow` upward, so `activate` cannot move focus off an elevated
+window and a human has to click something.
+
+This burned a whole investigation: a Cloud PC console was declared incapable of
+receiving input on the strength of `landed=NO`, while an elevated PowerShell
+console sat in the foreground the entire time. Two candidate causes, never
+separated. See the withdrawal in `HEADLESS-SETUP.md`. **When something reports
+`landed=NO`, enumerate the causes before concluding one of them.**
+
+Note also that `IsProcessElevated` must use `PROCESS_QUERY_LIMITED_INFORMATION`
+(`0x1000`), not `PROCESS_QUERY_INFORMATION` (`0x0400`) — the latter is refused
+across an integrity boundary, so it returns "not elevated" for exactly the
+processes that matter. It reports `unknown` rather than `false` on failure for
+the same reason.
 
 So `InputUsable()` **probes**: it nudges the cursor 4px, reads the position back
 and restores it. That is the only check that catches input which is accepted and

@@ -1,3 +1,6 @@
 agents/
 logs/
 queue/
+
+# Machine-local kill switch for the console-reattach task; not shared.
+.noreattach

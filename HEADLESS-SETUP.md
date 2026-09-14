@@ -1,30 +1,46 @@
 # Running macros unattended on a Windows 365 Cloud PC
 
-## Conclusion first: this does not work on a Cloud PC
+## First: check what has focus
 
-Tested on this machine, end to end. `tscon` reattaches the session to the
-console exactly as intended — and the console then accepts synthetic input and
-throws it away.
+An **elevated foreground window silently blocks all synthetic input** from this
+agent. UIPI refuses injection from a medium-integrity process to a higher one,
+`SendInput` still returns success, and the session is connected, unlocked and
+healthy in every other respect. Reproduced deliberately:
 
+| foreground window | `probe-input` |
+| --- | --- |
+| `Administrator: …pwsh.exe` | `landed=NO` |
+| `Shell_TrayWnd` (explorer) | `landed=yes` |
+
+```powershell
+.\Send-AhkCommand.ps1 active-window     # elevated=YES means this, not a broken session
 ```
-> .\Send-AhkCommand.ps1 probe-input
-sendinput=1 landed=NO cursor 512,384 -> 512,384 desktop=Default console=yes
-```
 
-Every indicator says healthy. Session state `Active`, desktop `Default`,
-`OpenInputDesktop` succeeds, and `SendInput` returns 1 — it reports inserting
-the event. The cursor does not move. Neither mouse nor keyboard reaches
-anything: `Win+R` opens no Run dialog.
+Two consequences worth knowing:
 
-A Windows 365 Cloud PC has no real console input stack. The only path that
-delivers input is the RDP stack, and that is precisely what goes away when you
-disconnect. So on a Cloud PC:
+- **Leaving an elevated console open is enough to break every macro**, with no
+  error that points at the cause. If you ran an installer elevated, focus
+  something else afterwards.
+- **The agent cannot fix it.** UIPI also blocks `SetForegroundWindow` upward, so
+  `activate` cannot move focus off an elevated window. A human has to click
+  something.
 
-> **Synthetic input works only while an RDP session is connected.**
+## The Cloud PC console: unresolved
 
-The agent now detects this by experiment rather than by name — see Probing
-below — so it reports `Ready = False` and refuses instead of silently doing
-nothing.
+An earlier version of this document concluded that a Cloud PC console cannot
+receive input at all, based on `probe-input` returning `landed=NO` after a
+`tscon` reattach. **That conclusion is withdrawn.** An elevated PowerShell
+console was open in the session throughout those tests, and UIPI produces
+exactly the symptoms observed — `landed=NO` with every other indicator healthy.
+The two explanations were never separated.
+
+Re-testing it means running the `tscon` setup below again with
+`active-window` checked at each step, confirming nothing elevated has focus.
+That needs local admin, which this account does not have.
+
+Until then, treat "does unattended input work on a Cloud PC console?" as
+**unknown**. What is certain is that the message-based verbs work regardless —
+see below — so nothing depends on the answer.
 
 ### What to do instead
 

@@ -200,10 +200,12 @@ Execute(cmd) {
     ; Verbs that only read state or post window messages are left alone.
     if verb ~= "^(click-icon|preview-icon|send)$" && !InputUsable()
         throw Error(Format("session {} cannot receive synthetic input right now "
-            . "(desktop {}, console {}). Reconnect over RDP. Note that on a Windows 365 "
-            . "Cloud PC the console accepts input and discards it, so reattaching there "
-            . "does not help - run `probe-input` to see it.",
-            SESSION, InputDesktopName(), IsConsoleSession() ? "yes" : "no"))
+            . "(desktop {}, console {}). Foreground: {}. "
+            . "If that window is elevated, UIPI is blocking injection and focusing "
+            . "anything unelevated fixes it; otherwise the session is locked or "
+            . "disconnected and needs an RDP client.",
+            SESSION, InputDesktopName(), IsConsoleSession() ? "yes" : "no",
+            ActiveWindowInfo()))
 
     switch verb {
         case "ping":
@@ -390,6 +392,14 @@ Execute(cmd) {
                 pr.sent, pr.landed ? "yes" : "NO", pr.from, pr.to,
                 InputDesktopName(), IsConsoleSession() ? "yes" : "no")
 
+        ; The foreground window decides whether synthetic input is allowed at
+        ; all. UIPI blocks a medium-integrity process from injecting input while
+        ; an elevated window has focus - SendInput still returns success and the
+        ; input is discarded, which is indistinguishable from a dead desktop
+        ; unless you look at what is in front.
+        case "active-window":
+            return ActiveWindowInfo()
+
         case "mouse-pos":
             MouseGetPos &mx, &my, &win
             return Format("{},{} over {}", mx, my, win ? WinGetClass(win) : "(none)")
@@ -403,6 +413,48 @@ Execute(cmd) {
             return "exiting"
     }
     throw Error("unknown command: " cmd)
+}
+
+; Is the given process running elevated (high or system integrity)?
+;
+; Matters because UIPI silently refuses input injection from a lower integrity
+; level to a higher one. A non-elevated agent cannot drive an elevated window,
+; and gets no error saying so - the only symptom is that nothing happens.
+; Returns "unknown" rather than false when the token cannot be read, because
+; being refused is itself evidence the target outranks us - reporting that as
+; "not elevated" points the investigation in exactly the wrong direction, which
+; it did once already.
+IsProcessElevated(pid) {
+    static TOKEN_QUERY := 0x0008, TokenElevation := 20
+    ; PROCESS_QUERY_LIMITED_INFORMATION (0x1000), not QUERY_INFORMATION
+    ; (0x0400): the latter is refused across an integrity boundary, so it fails
+    ; on precisely the elevated processes worth identifying.
+    h := DllCall("kernel32\OpenProcess", "UInt", 0x1000, "Int", 0, "UInt", pid, "Ptr")
+    if !h
+        return "unknown"
+    elevated := "unknown"
+    if DllCall("advapi32\OpenProcessToken", "Ptr", h, "UInt", TOKEN_QUERY, "Ptr*", &tok := 0) {
+        if DllCall("advapi32\GetTokenInformation", "Ptr", tok, "Int", TokenElevation,
+                   "UInt*", &val := 0, "UInt", 4, "UInt*", &len := 0)
+            elevated := val != 0 ? "YES" : "no"
+        DllCall("kernel32\CloseHandle", "Ptr", tok)
+    }
+    DllCall("kernel32\CloseHandle", "Ptr", h)
+    return elevated
+}
+
+; One line describing the foreground window, for diagnostics and for the error
+; a refused input command raises. What is in front decides whether input is
+; permitted at all, so it belongs in any report of input not working.
+ActiveWindowInfo() {
+    hwnd := WinExist("A")
+    if !hwnd
+        return "(no foreground window)"
+    pid := WinGetPID(hwnd)
+    exe := ""
+    try exe := WinGetProcessName(hwnd)
+    return Format("[{}] {} (pid {}, {}) elevated={}",
+        WinGetClass(hwnd), WinGetTitle(hwnd), pid, exe, IsProcessElevated(pid))
 }
 
 ; Locate a control by the caption it displays. Exact match wins outright;
