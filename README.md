@@ -15,7 +15,23 @@ SSH (session 0)                     interactive session
 ## Just want to elevate? One file, nothing to install
 
 `Heis-Standalone.ps1` does the Admin By Request dance on its own — no
-AutoHotkey, no agent, no setup, no admin rights. Download it and run it:
+AutoHotkey, no agent, no setup, no admin rights. Nothing to clone:
+
+```powershell
+irm https://raw.githubusercontent.com/damsleth/heis/main/Heis-Standalone.ps1 | iex
+```
+
+`| iex` cannot pass arguments, so for anything but a plain elevate, make a
+script block:
+
+```powershell
+$h = 'https://raw.githubusercontent.com/damsleth/heis/main/Heis-Standalone.ps1'
+& ([scriptblock]::Create((irm $h))) -Status
+& ([scriptblock]::Create((irm $h))) -Finish
+```
+
+Either way it writes a copy to `%LOCALAPPDATA%\Heis`, because the relay task
+needs a file on disk to point at. Or download it and run it:
 
 ```powershell
 .\Heis-Standalone.ps1              # elevate, unless already elevated

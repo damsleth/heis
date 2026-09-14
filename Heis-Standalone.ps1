@@ -19,11 +19,23 @@
     The only requirement is that an interactive session exists - it may be
     disconnected, but somebody has to have logged in since the last reboot.
 
+    It can also be run straight off a URL, with no file saved by hand:
+
+        irm https://example.com/heis | iex
+
+    Note that `| iex` cannot pass arguments. For anything but a plain elevate,
+    build a script block instead:
+
+        & ([scriptblock]::Create((irm https://example.com/heis))) -Status
+
+    Either way the script writes a copy of itself to LOCALAPPDATA\Heis, because
+    the relay task has to point at a file on disk.
+
 .EXAMPLE
     .\Heis-Standalone.ps1              # elevate, unless already elevated
     .\Heis-Standalone.ps1 -Status      # report and exit
     .\Heis-Standalone.ps1 -Finish      # end the running session
-    .\Heis-Standalone.ps1 -Uninstall   # remove the relay task
+    .\Heis-Standalone.ps1 -Uninstall   # remove the relay task and the copy
 #>
 [CmdletBinding()]
 param(
@@ -34,16 +46,40 @@ param(
     [string] $Exe = 'C:\Program Files (x86)\FastTrack Software\Admin By Request\AdminByRequest.exe',
     [int]    $WaitSec = 30,
 
+    # Where to re-fetch this script if it cannot recover its own source - see
+    # Resolve-SelfPath. Having a default here is what makes `irm <url> | iex`
+    # work at all, since that form leaves a script no way to know its own text.
+    # Point it at your own host if you serve a copy from somewhere else.
+    [string] $SourceUrl = 'https://raw.githubusercontent.com/damsleth/heis/main/Heis-Standalone.ps1',
+
     # Set when this instance is the one running inside the interactive session.
     # Not for humans.
     [switch] $InSession
 )
 
+### heis-standalone ###
+
 $ErrorActionPreference = 'Stop'
 $script:TaskName = 'Heis - Admin By Request'
 $script:StateDir = Join-Path $env:LOCALAPPDATA 'Heis'
-$script:Me       = $PSCommandPath
-if (-not $script:Me) { $script:Me = $MyInvocation.MyCommand.Path }
+
+# Sentinel proving a recovered blob really is this script. Do not remove.
+$script:Marker = '### heis-standalone ###'
+
+# This script's own source text, captured at script scope because $MyInvocation
+# inside a function describes the function instead.
+#
+# Needed because the relay task has to point at a file on disk, and there is no
+# file when the script arrives down a pipe:
+#
+#     irm https://example/heis | iex
+#
+# So Resolve-SelfPath writes this text out and points the task there. Doing it
+# for a file-based run too, rather than using $PSCommandPath, keeps the task
+# independent of wherever the copy you ran happened to live - a task pointing
+# into a Downloads folder someone later tidies up is a task that breaks
+# silently, weeks later.
+$script:SelfSource = $MyInvocation.MyCommand.ScriptBlock.ToString()
 
 # ---------------------------------------------------------------- win32 ---
 # Everything this script does to a window is a message: enumerate, read a
@@ -294,6 +330,52 @@ function Invoke-Action {
 # is where SSH lands, cannot enumerate or message the desktop's windows at all.
 # A scheduled task registered to run as this user, only when logged on, is the
 # unprivileged way to get code into the interactive session.
+# Write this script to a stable location and return that path.
+#
+# Recovering the source is not as simple as it looks. Under `iex` the
+# $MyInvocation captured at script scope describes the CALLER, so it hands back
+# whatever wrapper invoked the pipeline - a few hundred bytes of something else
+# entirely, which then gets written out and run by the relay task as if it were
+# this script. The failure is a silent 75-second timeout with no clue in it.
+#
+# So a recovered blob is only trusted if it carries the marker, and there are
+# three sources in order of reliability.
+function Resolve-SelfPath {
+    $src = $null
+
+    if ($script:SelfSource -and $script:SelfSource.Contains($script:Marker)) {
+        $src = $script:SelfSource                       # normal, and the & (…) form
+    } elseif ($PSCommandPath -and (Test-Path -LiteralPath $PSCommandPath)) {
+        $src = [IO.File]::ReadAllText($PSCommandPath)   # run from a file
+    } elseif ($SourceUrl) {
+        $src = (Invoke-RestMethod -Uri $SourceUrl)      # piped in from a URL
+        if (-not ($src -is [string]) -or -not $src.Contains($script:Marker)) {
+            throw "what $SourceUrl returned is not this script"
+        }
+    } else {
+        throw @'
+cannot recover my own source, so there is nothing to point the relay task at.
+
+This happens with `irm <url> | iex`, where PowerShell does not tell a script
+what its own text was. Either of these works instead:
+
+  & ([scriptblock]::Create((irm <url>)))            # and it takes -Status etc.
+  irm <url> -OutFile heis.ps1; .\heis.ps1
+
+or bake the URL in, by hosting a copy whose $SourceUrl default points at itself.
+'@
+    }
+
+    New-Item -ItemType Directory -Path $script:StateDir -Force | Out-Null
+    $path = Join-Path $script:StateDir 'Heis.ps1'
+
+    # UTF-8 WITH BOM, always. The relay runs Windows PowerShell 5.1, which reads
+    # a .ps1 as ANSI unless a BOM says otherwise and mangles every non-ASCII
+    # character in it before a single line executes.
+    [IO.File]::WriteAllText($path, $src, [Text.UTF8Encoding]::new($true))
+    return $path
+}
+
 function Register-RelayTask {
     # Windows PowerShell by absolute path, not $PSHOME: under pwsh 7 that would
     # point at pwsh.exe, which a downloaded copy of this script cannot assume is
@@ -305,7 +387,8 @@ function Register-RelayTask {
     # USERDOMAIN as WORKGROUP, which is not an authority that resolves - Task
     # Scheduler answers "No mapping between account names and security IDs".
     # The SID is the same however the session was established.
-    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $sid  = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $self = Resolve-SelfPath
 
     $xml = @"
 <?xml version="1.0" encoding="UTF-16"?>
@@ -332,8 +415,8 @@ function Register-RelayTask {
   <Actions Context="Author">
     <Exec>
       <Command>$ps</Command>
-      <Arguments>-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$($script:Me)" -InSession</Arguments>
-      <WorkingDirectory>$(Split-Path -Parent $script:Me)</WorkingDirectory>
+      <Arguments>-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$self" -InSession</Arguments>
+      <WorkingDirectory>$(Split-Path -Parent $self)</WorkingDirectory>
     </Exec>
   </Actions>
 </Task>
