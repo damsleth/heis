@@ -131,8 +131,7 @@ desktops are never guessed between; that refuses.
 | `Send-AhkCommand.ps1` | the client — runs anywhere, including SSH |
 | `Run-Macro.ps1` | launch an app and click through its dialogs |
 | `Install-AhkAgentTask.ps1` | start the agent on interactive logon |
-| `Install-ConsoleReattachTask.ps1` | reattach to console on disconnect (needs admin; see caveats) |
-| `Reattach-ConsoleSession.ps1` | what that task runs |
+| `heis.ps1` | request Admin By Request elevation, unless already elevated |
 | `HEADLESS-SETUP.md` | running unattended, and the limits |
 | `AGENTS.md` | notes for whoever works on this next |
 
