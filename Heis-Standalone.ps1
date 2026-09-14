@@ -1,6 +1,6 @@
-﻿<#
+<#
 .SYNOPSIS
-    Kjør heisen - request Admin By Request elevation. One file, no dependencies.
+    Kjoer heisen - request Admin By Request elevation. One file, no dependencies.
 
 .DESCRIPTION
     Launches Admin By Request with /Elevate and clicks through its dialogs. Works
@@ -58,6 +58,21 @@ param(
 )
 
 ### heis-standalone ###
+
+# Norwegian output is composed from character codes so this file can stay pure
+# ASCII. That is not tidiness - it is the only encoding that works in both
+# places this script has to run:
+#
+#   - As a file under Windows PowerShell 5.1, which reads a .ps1 as ANSI unless
+#     it carries a BOM, mangling every non-ASCII character in it.
+#   - Piped in from a URL, where `irm ... | iex` keeps the BOM as a character
+#     and PowerShell then refuses to parse the script at all - it fails on the
+#     comment-based help and reports a syntax error a dozen lines further down.
+#
+# A BOM fixes the first and breaks the second. Pure ASCII needs neither.
+# Keep it that way: no non-ASCII characters anywhere in this file.
+$script:AA = [char]0xE5   # a-ring
+$script:OE = [char]0xF8   # o-slash
 
 $ErrorActionPreference = 'Stop'
 $script:TaskName = 'Heis - Admin By Request'
@@ -262,7 +277,7 @@ function Invoke-Elevate {
     param([int] $Seconds)
 
     $abr = Get-AbrState
-    if ($abr.Active) { return "heisen går allerede - $($abr.Remaining) igjen" }
+    if ($abr.Active) { return "heisen g$($script:AA)r allerede - $($abr.Remaining) igjen" }
 
     if (-not (Test-Path -LiteralPath $Exe)) { throw "not found: $Exe" }
     Start-Process -FilePath $Exe -ArgumentList '/Elevate' | Out-Null
@@ -288,7 +303,7 @@ function Invoke-Finish {
     param([int] $Seconds)
 
     $abr = Get-AbrState
-    if (-not $abr.Active) { return 'ingen heis å stoppe' }
+    if (-not $abr.Active) { return "ingen heis $($script:AA) stoppe" }
 
     # Addressed by hwnd: the countdown window's title is a clock and changes
     # every second, so any title match races the tick.
@@ -311,7 +326,7 @@ function Invoke-Finish {
 
 function Format-Status {
     $abr = Get-AbrState
-    if ($abr.Active) { return "heisen går allerede - $($abr.Remaining) igjen" }
+    if ($abr.Active) { return "heisen g$($script:AA)r allerede - $($abr.Remaining) igjen" }
     if ($abr.InGroup) { return 'konto er admin, men ingen ABR-nedtelling' }
     return 'ikke elevert'
 }
@@ -344,7 +359,7 @@ function Resolve-SelfPath {
     $src = $null
 
     if ($script:SelfSource -and $script:SelfSource.Contains($script:Marker)) {
-        $src = $script:SelfSource                       # normal, and the & (…) form
+        $src = $script:SelfSource                       # normal, and the & (...) form
     } elseif ($PSCommandPath -and (Test-Path -LiteralPath $PSCommandPath)) {
         $src = [IO.File]::ReadAllText($PSCommandPath)   # run from a file
     } elseif ($SourceUrl) {
