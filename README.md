@@ -12,6 +12,31 @@ SSH (session 0)                     interactive session
                        <--done/---
 ```
 
+## Just want to elevate? One file, nothing to install
+
+`Heis-Standalone.ps1` does the Admin By Request dance on its own — no
+AutoHotkey, no agent, no setup, no admin rights. Download it and run it:
+
+```powershell
+.\Heis-Standalone.ps1              # elevate, unless already elevated
+.\Heis-Standalone.ps1 -Status
+.\Heis-Standalone.ps1 -Finish      # end the session
+.\Heis-Standalone.ps1 -Uninstall   # remove the relay task it registers
+```
+
+Works from the desktop and over SSH. Over SSH it relays itself into the
+interactive session through a scheduled task it registers on first use, because
+window handles do not cross a session boundary. Cold start on a machine with
+nothing installed takes about a second.
+
+It works with nobody connected over RDP — verified, with the session in `Disc`
+state and no input desktop. The one requirement is that an interactive session
+exists: it may be disconnected, but somebody has to have logged in since the
+last reboot.
+
+The rest of this repo is the toolkit that was built to work all of that out,
+and is what you want for exploring a new app's windows interactively.
+
 ## Quick start
 
 ```powershell
@@ -131,7 +156,8 @@ desktops are never guessed between; that refuses.
 | `Send-AhkCommand.ps1` | the client — runs anywhere, including SSH |
 | `Run-Macro.ps1` | launch an app and click through its dialogs |
 | `Install-AhkAgentTask.ps1` | start the agent on interactive logon |
-| `heis.ps1` | request Admin By Request elevation, unless already elevated |
+| `Heis-Standalone.ps1` | **the deliverable** — elevation in one file, no dependencies |
+| `heis.ps1` | the same thing built on the agent, kept as a worked example |
 | `HEADLESS-SETUP.md` | running unattended, and the limits |
 | `AGENTS.md` | notes for whoever works on this next |
 

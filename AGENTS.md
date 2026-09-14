@@ -149,6 +149,25 @@ Works with no input desktop at all: `run`, `windows`, `win-pos`,
 - RDP resolution and DPI change under a running agent as the client window is
   resized or moved between displays. Never cache geometry.
 
+## Heis-Standalone.ps1
+
+The single-file version, with no AutoHotkey and no resident agent. Two traps
+cost real time and are easy to reintroduce:
+
+- **It must be saved UTF-8 *with BOM*.** The relay task runs Windows PowerShell
+  5.1, which reads a `.ps1` as ANSI unless a BOM says otherwise, so the
+  Norwegian strings arrive mangled (`går` → `gÃ¥r`) before anything is even
+  written. Any editor that helpfully strips the BOM breaks it.
+- **The scheduled task names the account by SID, not `DOMAIN\user`.** An SSH
+  login reports `USERDOMAIN` as `WORKGROUP`, which does not resolve, and Task
+  Scheduler rejects it with "No mapping between account names and security
+  IDs". `[WindowsIdentity]::GetCurrent().User.Value` is the same however the
+  session was established.
+
+It also hardcodes Windows PowerShell's absolute path rather than `$PSHOME`,
+which under pwsh 7 points at `pwsh.exe` — not something a downloaded copy can
+assume is installed.
+
 ## Style
 
 Comments explain **why**, especially where the code looks like it could be
