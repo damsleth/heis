@@ -270,7 +270,13 @@ Execute(cmd) {
                     continue
                 if t = "" && arg != "hidden"
                     continue
-                out .= Format("{} [{}] {}`n", hwnd, c, t)
+                ; The exe is here because a class alone does not identify an
+                ; app: every .NET app shares WindowsForms10.Window.*, so a
+                ; caller matching on title plus class can still hit the wrong
+                ; program. Scripts key off this column.
+                e := ""
+                try e := WinGetProcessName(hwnd)
+                out .= Format("{} [{}] ({}) {}`n", hwnd, c, e, t)
                 if ++n >= 40 {
                     out .= "... truncated`n"
                     break
