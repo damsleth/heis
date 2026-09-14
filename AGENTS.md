@@ -128,6 +128,12 @@ Works with no input desktop at all: `run`, `windows`, `win-pos`,
 - `wait-window` occupies the agent for its whole duration — one command at a
   time. The client's `-TimeoutSec` must exceed the wait or it gives up on a
   command that would have succeeded.
+- **The agent stops heartbeating while it is busy.** It is single-threaded, and
+  `ControlGetText`/`WinGetControls` use `SendMessage`, which blocks against an
+  app showing a modal dialog. A short staleness cutoff therefore declares a
+  healthy agent dead mid-macro — it happened during the ABR run. Liveness is
+  the pid; heartbeat age only distinguishes busy from dead, and the reply
+  timeout is what actually catches a wedged agent.
 
 ## Environment quirks seen here
 

@@ -51,8 +51,9 @@ param(
 
     [int]    $TimeoutSec = 10,
 
-    # Treat an agent as dead if its heartbeat is older than this.
-    [int]    $StaleSec = 30,
+    # Backstop for abandoned heartbeat files. Not a busy-detector: see the note
+    # in Get-LiveAgents on why this is minutes rather than seconds.
+    [int]    $StaleSec = 300,
 
     [string] $Root
 )
@@ -83,8 +84,19 @@ function Get-LiveAgents {
         catch { continue }          # half-written or corrupt: ignore, not fatal
 
         $age = $now - [int] $a.unix
-        # Two independent liveness checks: a fresh heartbeat AND a process that
-        # still exists. A killed agent leaves its file behind if it died hard.
+
+        # Liveness is the process, not the heartbeat. The agent runs everything
+        # on one thread, so a command that blocks - ControlGetText against an
+        # app showing a modal dialog, say - stops heartbeats for as long as it
+        # takes. Requiring a fresh heartbeat declared a healthy agent dead in
+        # the middle of a macro because it was busy doing what it was asked.
+        #
+        # A stale heartbeat on a live process means busy; the way to find out is
+        # to send the command and let the reply timeout decide, which reports a
+        # wedged agent accurately instead of guessing. StaleSec is kept as a
+        # generous backstop against a heartbeat left behind by an agent that
+        # died hard and whose pid has since been reused - minutes, not seconds,
+        # because seconds is what misfired.
         $alive = (Get-Process -Id $a.pid -ErrorAction SilentlyContinue) -ne $null
         # Agents predating the 'ready' field are judged on the desktop name,
         # which is what that field was distilled from. Computed here rather than
