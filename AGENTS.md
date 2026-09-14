@@ -113,6 +113,15 @@ Works with no input desktop at all: `run`, `windows`, `win-pos`,
   repo's history — both "this primitive is broken headless" — were wrong tests
   pressing the wrong button. Verify a control's caption with `buttons` before
   concluding anything about a primitive.
+- **Title matching is "contains", and it is z-order dependent.** Measured: a
+  substring from the *middle* of a title matches. So `Admin By Request` also
+  matches `Admin By Request Confirm`, and which window you get depends on which
+  was activated last — it picked the right one until the other was brought to
+  the front, then silently picked the wrong one. Prefix a spec with `exact:`
+  whenever one title is a substring of another, and prefer `wait-gone` on the
+  first dialog before waiting for the second. `ResolveWin` sets the mode per
+  call rather than globally, so one `exact:` cannot change how later commands
+  match.
 - It is per-app. Classic Win32 responds; WinUI, Electron and Chromium draw their
   own controls with no handles, so `buttons` comes back empty and none of it
   applies.

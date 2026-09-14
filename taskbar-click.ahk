@@ -239,7 +239,7 @@ Execute(cmd) {
         case "activate":
             if arg = ""
                 throw Error("activate requires a window title, for example: activate ahk_exe notepad.exe")
-            if !WinExist(arg)
+            if !WinExist(ResolveWin(arg))
                 throw Error("no window matching: " arg)
             WinActivate
             return "activated: " WinGetTitle("A")
@@ -286,9 +286,24 @@ Execute(cmd) {
             ; Hidden windows deliberately excluded: a dialog worth waiting for
             ; is one that has actually appeared.
             DetectHiddenWindows false
-            if !WinWait(p[1], , secs)
+            w := ResolveWin(p[1])
+            if !WinWait(w, , secs)
                 throw Error(Format("timed out after {}s waiting for: {}", secs, p[1]))
-            return Format("appeared: [{}] {}", WinGetClass(p[1]), WinGetTitle(p[1]))
+            return Format("appeared: [{}] {}", WinGetClass(w), WinGetTitle(w))
+
+        ; The other half of wait-window, and the reliable way to sequence two
+        ; dialogs whose titles overlap: wait for the first to close before
+        ; looking for the second, rather than trusting a title to be unambiguous
+        ; while both are on screen.
+        case "wait-gone":                          ; win | seconds (default 10)
+            p := StrSplit(arg, "|", " `t")
+            if p.Length < 1 || p[1] = ""
+                throw Error("wait-gone requires: <window> [| <seconds>]")
+            secs := (p.Length >= 2 && p[2] != "") ? Number(p[2]) : 10
+            DetectHiddenWindows false
+            if !WinWaitClose(ResolveWin(p[1]), , secs)
+                throw Error(Format("still open after {}s: {}", secs, p[1]))
+            return Format("gone: {}", p[1])
 
         ; Press a button by the caption a person reads off the screen.
         ;
@@ -301,12 +316,13 @@ Execute(cmd) {
         case "press-text":                         ; win | button caption
             p := SplitArgs(arg, 2, "press-text requires: <window> | <button caption>")
             DetectHiddenWindows true
-            if !WinExist(p[1])
+            w := ResolveWin(p[1])
+            if !WinExist(w)
                 throw Error("no window matching: " p[1])
-            ctl := FindControlByText(p[1], p[2])
-            PostMessage 0x00F5, 0, 0, ctl, p[1]    ; BM_CLICK
+            ctl := FindControlByText(w, p[2])
+            PostMessage 0x00F5, 0, 0, ctl, w       ; BM_CLICK
             return Format("pressed '{}' via {} in [{}] {}",
-                p[2], ctl, WinGetClass(p[1]), WinGetTitle(p[1]))
+                p[2], ctl, WinGetClass(w), WinGetTitle(w))
 
         ; What can actually be pressed, and what it says. Run this first against
         ; any new dialog: an empty list means the app draws its own controls
@@ -315,12 +331,13 @@ Execute(cmd) {
             if arg = ""
                 throw Error("buttons requires a window")
             DetectHiddenWindows true
-            if !WinExist(arg)
+            w := ResolveWin(arg)
+            if !WinExist(w)
                 throw Error("no window matching: " arg)
             out := ""
-            for ctl in WinGetControls(arg) {
+            for ctl in WinGetControls(w) {
                 t := ""
-                try t := ControlGetText(ctl, arg)
+                try t := ControlGetText(ctl, w)
                 out .= Format("{}{}`n", ctl, t != "" ? "  = " t : "")
             }
             return "`n" (out = "" ? "(no addressable controls)" : RTrim(out, "`n"))
@@ -329,26 +346,28 @@ Execute(cmd) {
             if arg = ""
                 throw Error("win-pos requires a window")
             DetectHiddenWindows true
-            if !WinExist(arg)
+            w := ResolveWin(arg)
+            if !WinExist(w)
                 throw Error("no window matching: " arg)
-            WinGetPos(&wx, &wy, &ww, &wh, arg)
+            WinGetPos(&wx, &wy, &ww, &wh, w)
             return Format("{},{} {}x{}", wx, wy, ww, wh)
 
         case "control-list":                       ; win
             if arg = ""
                 throw Error("control-list requires a window, for example: control-list ahk_class Notepad")
             DetectHiddenWindows true
-            if !WinExist(arg)
+            w := ResolveWin(arg)
+            if !WinExist(w)
                 throw Error("no window matching: " arg)
             out := ""
-            for ctl in WinGetControls(arg)
+            for ctl in WinGetControls(w)
                 out .= ctl "`n"
             return "`n" RTrim(out, "`n")
 
         case "control-click":                      ; win | control
             p := SplitArgs(arg, 2, "control-click requires: <window> | <control>")
             DetectHiddenWindows true
-            ControlClick p[2], p[1]
+            ControlClick p[2], ResolveWin(p[1])
             return Format("clicked control '{}' in '{}'", p[2], p[1])
 
         ; BM_CLICK asks a button to activate itself, one message, no coordinates
@@ -360,13 +379,13 @@ Execute(cmd) {
         case "control-press":                      ; win | control
             p := SplitArgs(arg, 2, "control-press requires: <window> | <control>")
             DetectHiddenWindows true
-            PostMessage 0x00F5, 0, 0, p[2], p[1]   ; BM_CLICK
+            PostMessage 0x00F5, 0, 0, p[2], ResolveWin(p[1])   ; BM_CLICK
             return Format("pressed control '{}' in '{}'", p[2], p[1])
 
         case "control-send":                       ; win | control | keys
             p := SplitArgs(arg, 3, "control-send requires: <window> | <control> | <keys>")
             DetectHiddenWindows true
-            ControlSend p[3], p[2], p[1]
+            ControlSend p[3], p[2], ResolveWin(p[1])
             return Format("sent '{}' to control '{}'", p[3], p[2])
 
         ; Prefer this over control-send for text. ControlSend synthesises
@@ -377,13 +396,13 @@ Execute(cmd) {
         case "control-settext":                    ; win | control | text
             p := SplitArgs(arg, 3, "control-settext requires: <window> | <control> | <text>")
             DetectHiddenWindows true
-            ControlSetText p[3], p[2], p[1]
+            ControlSetText p[3], p[2], ResolveWin(p[1])
             return Format("set control '{}' to '{}'", p[2], p[3])
 
         case "control-text":                       ; win | control
             p := SplitArgs(arg, 2, "control-text requires: <window> | <control>")
             DetectHiddenWindows true
-            return "[" ControlGetText(p[2], p[1]) "]"
+            return "[" ControlGetText(p[2], ResolveWin(p[1])) "]"
 
         case "probe-input":
             InputUsable(true)              ; force, so this reports live truth
@@ -455,6 +474,26 @@ ActiveWindowInfo() {
     try exe := WinGetProcessName(hwnd)
     return Format("[{}] {} (pid {}, {}) elevated={}",
         WinGetClass(hwnd), WinGetTitle(hwnd), pid, exe, IsProcessElevated(pid))
+}
+
+; Resolve a window spec, and set the matching mode it implies.
+;
+; Default is "contains" (mode 2), which is forgiving but dangerous when one
+; title is a substring of another: "Admin By Request" matches the still-open
+; "Admin By Request Confirm", so a macro waiting for the second dialog can be
+; handed the first. Measured, not assumed - even a substring from the middle of
+; a title matches.
+;
+; Prefix a spec with `exact:` to demand the whole title instead. Mode is set per
+; call rather than once at startup, so one exact: spec cannot quietly change how
+; every later command matches.
+ResolveWin(spec) {
+    if SubStr(spec, 1, 6) = "exact:" {
+        SetTitleMatchMode 3
+        return Trim(SubStr(spec, 7))
+    }
+    SetTitleMatchMode 2
+    return spec
 }
 
 ; Locate a control by the caption it displays. Exact match wins outright;

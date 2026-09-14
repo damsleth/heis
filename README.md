@@ -80,6 +80,7 @@ are separated with `|`.
 | --- | --- |
 | `run <command>` | launch a program |
 | `wait-window <win> \| <secs>` | block until it appears |
+| `wait-gone <win> \| <secs>` | block until it closes |
 | `press-text <win> \| <caption>` | press a button by what it says |
 | `control-press <win> \| <ctl>` | `BM_CLICK` a button by name |
 | `control-click <win> \| <ctl>` | post a click to a control |
@@ -98,6 +99,21 @@ are separated with `|`.
 
 **Lifecycle:** `reload`, `exit`. Hotkeys in the session: `F8` preview, `F9`
 click, `F10` inspect cursor, `F12` reload, `Ctrl+Alt+Q` exit.
+
+## Matching windows by title
+
+Titles match on **contains** by default, so `Admin By Request` also matches
+`Admin By Request Confirm` — and which one you get depends on z-order, so it
+can work for weeks and then press the wrong dialog. Prefix the spec with
+`exact:` whenever one title is a substring of another:
+
+```powershell
+.\Send-AhkCommand.ps1 'press-text exact: Admin By Request | OK'
+```
+
+For dialogs that appear in sequence, `wait-gone` on the first before waiting for
+the second removes the ambiguity entirely, and is worth doing anyway so a macro
+cannot race ahead of a dialog that is still closing.
 
 ## Targeting
 
