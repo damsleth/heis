@@ -59,7 +59,18 @@ param(
     # Resolve-SelfPath. Having a default here is what makes `irm <url> | iex`
     # work at all, since that form leaves a script no way to know its own text.
     # Point it at your own host if you serve a copy from somewhere else.
-    [string] $SourceUrl = 'https://raw.githubusercontent.com/damsleth/heis/main/Heis.ps1',
+    [string] $SourceUrl = 'https://heis.d0.si/Heis.ps1',
+
+    # Write a block into $PROFILE that reports status on logon, and takes the
+    # heis when there is none. Re-running replaces the block. These live here
+    # rather than in Install.ps1 because they are settings, not install steps:
+    # changing your mind later should not mean re-running an installer.
+    [switch] $AddToProfile,
+    [bool]   $AutoElevateOnLogin = $true,
+
+    # Check that the whole path works: the relay, and elevation itself.
+    # Non-destructive when a session is already running - see Invoke-Verify.
+    [switch] $Verify,
 
     # Emit the full state object instead of just the message, so a caller can
     # branch on .Active or .Remaining rather than matching on Norwegian text.
@@ -378,6 +389,24 @@ function Resolve-AbrExe {
     throw 'cannot find AdminByRequest.exe - pass its path with -Exe'
 }
 
+# Prove the whole path works, without breaking anything that already does.
+#
+# When a session is running, elevating again proves nothing that is not already
+# proven - the countdown on screen IS the proof - while ending it costs a live
+# admin session, files another audit event, and leaves you worse off than
+# before if the re-elevation then fails. So that case only confirms the relay
+# and status round-trip. With nothing running, a real elevation is both the
+# best test available and something you wanted anyway.
+function Invoke-Verify {
+    param([int] $Seconds)
+
+    if ((Get-AbrState).Active) {
+        return "verifisert - relayet svarer, og heisen gikk allerede"
+    }
+    $msg = Invoke-Elevate -Seconds $Seconds
+    return "verifisert - $msg"
+}
+
 function Format-Status {
     $abr = Get-AbrState
     if ($abr.Active) { return "heisen g$($script:AA)r allerede - $($abr.Remaining) igjen" }
@@ -395,6 +424,7 @@ function Invoke-Action {
     $message = switch ($Action) {
         'Status'  { Format-Status }
         'Finish'  { Invoke-Finish  -Seconds $Seconds }
+        'Verify'  { Invoke-Verify  -Seconds $Seconds }
         default   { Invoke-Elevate -Seconds $Seconds }
     }
 
@@ -618,6 +648,90 @@ over RDP once and this works from here afterwards.
     throw "no reply from the interactive session within $($Seconds + 45)s. Is anyone logged in?"
 }
 
+# --------------------------------------------------------------- profile ---
+# Write the logon block into $PROFILE, replacing any previous one.
+#
+# Built from a single-quoted template with placeholders so none of the block's
+# own $variables are interpolated while it is written out. Escaping a dozen of
+# them by hand works right until one is missed, and a missed one bakes this
+# run's values into somebody's profile.
+function Add-HeisToProfile {
+    param([Parameter(Mandatory)][string] $Target, [bool] $AutoElevate = $true)
+
+    $begin  = '# >>> heis >>>'
+    $end    = '# <<< heis <<<'
+    $quoted = $Target.Replace("'", "''")   # single quotes are legal in a path
+
+    $template = @'
+__BEGIN__
+# Added by Heis.ps1 -AddToProfile. Delete this block to stop it.
+
+# Take the heis automatically on remote logon. $false reports status only.
+$HEIS_AUTO_ELEVATE = __AUTO__
+$HEIS_PATH         = '__PATH__'
+
+# Live admin check, on purpose not [WindowsPrincipal]::IsInRole: a process
+# token carries the group membership it was born with, so a shell started
+# before elevation answers "not admin" for the rest of its life however
+# elevated the account becomes. A function rather than a variable for the same
+# reason - a variable set at logon is a snapshot that quietly goes stale.
+function Test-IsAdmin {
+    ((net localgroup Administrators 2>$null) -join "`n") -match [regex]::Escape($env:USERNAME)
+}
+
+# Status comes from Heis.ps1 itself, which reads the countdown window on the
+# desktop rather than inferring anything from this process.
+function Show-HeisStatus {
+    if (-not (Test-Path -LiteralPath $HEIS_PATH)) { return $null }
+
+    $h = & $HEIS_PATH -Status -PassThru
+    if     ($h.Active)  { Write-Host "ABR aktiv - $($h.Remaining) igjen"  -ForegroundColor Green }
+    elseif ($h.InGroup) { Write-Host 'admin, men ingen ABR-nedtelling'    -ForegroundColor DarkYellow }
+    else                { Write-Host 'ikke elevert'                       -ForegroundColor Yellow }
+    return $h
+}
+
+$heis = Show-HeisStatus
+
+# SSH_CONNECTION is set by the SSH server for its own sessions and by nothing
+# else - a better test than session id, which also catches services. At the
+# desktop you can take the heis by hand.
+if ($HEIS_AUTO_ELEVATE -and $env:SSH_CONNECTION -and $heis -and -not $heis.Active) {
+    & $HEIS_PATH | Out-Null
+    $heis = Show-HeisStatus      # report where that left things
+}
+__END__
+'@
+
+    $auto  = if ($AutoElevate) { '$true' } else { '$false' }
+    $block = $template.Replace('__BEGIN__', $begin).
+                       Replace('__END__',   $end).
+                       Replace('__AUTO__',  $auto).
+                       Replace('__PATH__',  $quoted)
+
+    $dir = Split-Path -Parent $PROFILE
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+
+    $existing = ''
+    $hadBom   = $false
+    if (Test-Path -LiteralPath $PROFILE) {
+        $bytes    = [IO.File]::ReadAllBytes($PROFILE)
+        $hadBom   = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+        $existing = [IO.File]::ReadAllText($PROFILE)
+    }
+
+    $pattern = [regex]::Escape($begin) + '.*?' + [regex]::Escape($end)
+    $cleaned = ([regex]::Replace($existing, $pattern, '', 'Singleline')).TrimEnd()
+    $updated = if ($cleaned) { "$cleaned`r`n`r`n$block`r`n" } else { "$block`r`n" }
+
+    # Preserve whatever BOM was there: removing one breaks a Windows PowerShell
+    # profile containing non-ASCII, and adding one where there was none is an
+    # unexplained diff in a file this script does not own.
+    [IO.File]::WriteAllText($PROFILE, $updated, [Text.UTF8Encoding]::new($hadBom))
+}
+
 # ----------------------------------------------------------------- main ---
 if ($Uninstall) {
     # Both names, since a fallback task may have been registered alongside the
@@ -645,9 +759,29 @@ if ($Uninstall) {
     return
 }
 
-$action = 'Elevate'
-if ($Status) { $action = 'Status' }
-if ($Finish) { $action = 'Finish' }
+# -AddToProfile is a setting, not an action, so on its own it configures and
+# stops. Pair it with -Verify (as the installer does) to also prove the thing
+# works once it is wired up.
+if ($AddToProfile -and -not $InSession) {
+    $target = $PSCommandPath
+    if (-not $target -or -not (Test-Path -LiteralPath $target)) { $target = Resolve-SelfPath }
+    Add-HeisToProfile -Target $target -AutoElevate $AutoElevateOnLogin
+
+    if ($AutoElevateOnLogin) {
+        Write-Host 'Lagt til i profilen - heisen tas automatisk ved SSH-innlogging' -ForegroundColor Green
+    } else {
+        Write-Host 'Lagt til i profilen - status vises ved innlogging, men heisen tas ikke' -ForegroundColor Green
+    }
+    Write-Host "  $PROFILE" -ForegroundColor DarkGray
+}
+
+$action = $null
+if     ($Verify) { $action = 'Verify' }
+elseif ($Finish) { $action = 'Finish' }
+elseif ($Status) { $action = 'Status' }
+elseif (-not $AddToProfile) { $action = 'Elevate' }
+
+if (-not $action) { return }
 
 if ($InSession) {
     # Running inside the interactive session, launched by the relay task.

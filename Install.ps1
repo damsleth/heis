@@ -1,57 +1,51 @@
 <#
 .SYNOPSIS
-    Installer heisen - put Heis.ps1 next to your PowerShell profile.
+    Installer heisen - fetch Heis.ps1, wire it up, and check that it works.
 
 .DESCRIPTION
-    Copies Heis.ps1 into the current directory, where it is easy to find, move
-    or copy somewhere permanent. Use -Destination to put it elsewhere.
+    A first-run script. It asks where to put Heis.ps1, whether to report status
+    on logon, and whether to take the heis automatically when logging in over
+    SSH - then downloads the script, applies those answers and verifies the
+    whole path end to end.
 
-    Run it from a clone, or straight off the web - if there is no Heis.ps1
-    beside this script it is fetched from SourceUrl:
+        irm https://heis.d0.si/install.ps1 | iex
 
-        irm https://raw.githubusercontent.com/damsleth/heis/main/Install.ps1 | iex
+    Everything it sets is a setting on Heis.ps1 itself, so nothing here has to
+    be re-run to change your mind later:
 
-    Existing installs are left alone. Pass -Force to overwrite one.
+        .\Heis.ps1 -AddToProfile -AutoElevateOnLogin $false
+        .\Heis.ps1 -Verify
 
-    -AddToProfile also writes a block into $PROFILE so the heis is taken
-    automatically when you log in - but only over SSH. Locally you are at the
-    desktop and can take it by hand; there is no reason to fire an elevation
-    request for every console opened on the machine itself.
+    No administrator rights are needed, for this or for anything Heis.ps1 does.
 
-    It edits the profile of the host it runs under: pwsh and Windows PowerShell
-    have separate ones, so run it under the shell you actually log in with. The
-    block is delimited by markers and re-running replaces it, so the path stays
-    current and the profile does not collect copies. Delete the block to stop
-    it.
-
-    Each remote shell then costs about a second while it checks, and rather
-    more the first time, when it actually elevates.
+    Prompts are skipped when there is nobody to answer them - piped input, a
+    scheduled task, CI - and the defaults are used instead. -Yes forces that
+    explicitly; -Path, -AddToProfile and -AutoElevateOnLogin pre-answer
+    individual questions.
 
 .EXAMPLE
+    irm https://heis.d0.si/install.ps1 | iex
     .\Install.ps1
-    .\Install.ps1 -Force
-    .\Install.ps1 -AddToProfile
-    .\Install.ps1 -Destination C:\tools -AddToProfile
+    .\Install.ps1 -Yes
+    .\Install.ps1 -Path C:\tools -AddToProfile $true -AutoElevateOnLogin $false
 #>
 [CmdletBinding()]
 param(
-    # Overwrite an existing copy instead of leaving it alone.
-    [switch] $Force,
+    # Where to put Heis.ps1. Prompted for when not given; defaults to here.
+    [string] $Path,
 
-    # Where to fetch Heis.ps1 when there is no copy beside this script.
-    [string] $SourceUrl = 'https://raw.githubusercontent.com/damsleth/heis/main/Heis.ps1',
+    # Pre-answer the prompts. Left unset, they are asked for.
+    [nullable[bool]] $AddToProfile,
+    [nullable[bool]] $AutoElevateOnLogin,
 
-    # Install somewhere other than the current directory.
-    [string] $Destination,
+    # Take every default without asking.
+    [switch] $Yes,
 
-    # Also add a block to $PROFILE that takes the heis automatically when you
-    # log in over SSH. Re-running replaces the block rather than adding another.
-    [switch] $AddToProfile,
+    # Where to fetch Heis.ps1 from.
+    [string] $SourceUrl = 'https://heis.d0.si/Heis.ps1',
 
-    # The value written into the block's $HEIS_AUTO_ELEVATE flag. $false still
-    # reports status on logon, it just does not elevate. Editing the flag in the
-    # profile afterwards works too; this only picks the initial value.
-    [bool] $AutoElevateOnLogin = $true
+    # Overwrite an existing Heis.ps1 at the destination.
+    [switch] $Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -63,140 +57,129 @@ $ErrorActionPreference = 'Stop'
 $AA = [char]0xE5   # a-ring
 $OE = [char]0xF8   # o-slash
 
-# The current directory, so the file lands where you are and can be moved
-# wherever you want it.
-#
-# Taken from the provider path rather than $PWD directly: a PowerShell location
-# can sit on a drive that is not a filesystem at all - a registry or
-# certificate drive - and there is nowhere to write a file there. Falling back
-# to the home directory beats failing on something nobody was thinking about.
-if (-not $Destination) {
-    if ($PWD.Provider.Name -eq 'FileSystem') { $Destination = $PWD.ProviderPath }
-    else                                     { $Destination = $HOME }
+# Prompting something that cannot answer hangs it forever, and this is run
+# piped into iex as often as not.
+$script:CanAsk = -not $Yes -and -not [Console]::IsInputRedirected -and [Environment]::UserInteractive
+
+function Read-YesNo {
+    param([Parameter(Mandatory)][string] $Question, [bool] $Default = $true)
+
+    if (-not $script:CanAsk) { return $Default }
+    $hint = if ($Default) { '[J/n]' } else { '[j/N]' }
+
+    while ($true) {
+        $answer = (Read-Host "$Question $hint").Trim()
+        if (-not $answer)                     { return $Default }
+        if ($answer -match '^(j|ja|y|yes)$')  { return $true }
+        if ($answer -match '^(n|nei|no)$')    { return $false }
+    }
 }
-if (-not $Destination) { throw 'cannot work out where to install' }
 
-$target = Join-Path $Destination 'Heis.ps1'
+function Read-Text {
+    param([Parameter(Mandatory)][string] $Question, [Parameter(Mandatory)][string] $Default)
 
+    if (-not $script:CanAsk) { return $Default }
+    $answer = (Read-Host "$Question [$Default]").Trim().Trim('"')
+    if ($answer) { return $answer } else { return $Default }
+}
+
+Write-Host @'
+
+  _   _ _____ ___ ____
+ | | | | ____|_ _/ ___|
+ | |_| |  _|  | |\___ \
+ |  _  | |___ | | ___) |
+ |_| |_|_____|___|____/
+
+'@ -ForegroundColor Cyan
+Write-Host '          the ABR elevator' -ForegroundColor DarkCyan
+Write-Host ''
+
+Write-Host 'Heis tar heisen for deg - Admin By Request, uten a klikke.' -ForegroundColor Gray
+Write-Host ''
+Write-Host 'Dette installeres:' -ForegroundColor Gray
+Write-Host '  - Heis.ps1, en enkelt fil uten avhengigheter' -ForegroundColor DarkGray
+Write-Host '  - en planlagt oppgave som kjorer den i skrivebordsokten,' -ForegroundColor DarkGray
+Write-Host '    slik at den ogsa virker over SSH. Krever ikke administrator.' -ForegroundColor DarkGray
+Write-Host ''
+
+# --- answers ---------------------------------------------------------------
+$here = if ($PWD.Provider.Name -eq 'FileSystem') { $PWD.ProviderPath } else { $HOME }
+
+$destination = if ($Path) { $Path } else { Read-Text 'Hvor skal Heis.ps1 ligge?' $here }
+
+$wantProfile = if ($null -ne $AddToProfile) { [bool]$AddToProfile }
+               else { Read-YesNo 'Vis status ved innlogging (legg til i $PROFILE)?' $true }
+
+$wantAuto = $false
+if ($wantProfile) {
+    $wantAuto = if ($null -ne $AutoElevateOnLogin) { [bool]$AutoElevateOnLogin }
+                else { Read-YesNo 'Ta heisen automatisk ved SSH-innlogging?' $true }
+}
+
+# --- fetch -----------------------------------------------------------------
+$marker = '### heis-standalone ###'
+$target = Join-Path $destination 'Heis.ps1'
+
+Write-Host ''
 if ((Test-Path -LiteralPath $target) -and -not $Force) {
-    Write-Host "Heisen er allerede installert" -ForegroundColor DarkGray
+    Write-Host "Heis.ps1 finnes allerede i $destination" -ForegroundColor DarkGray
 } else {
-    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    New-Item -ItemType Directory -Path $destination -Force | Out-Null
 
-    # Prefer a copy sitting beside this script; fall back to the network. Both
-    # are validated against the same marker Heis.ps1 uses to recognise itself,
-    # so a redirect to a login page or an error blob is caught here rather than
-    # being written out and run later.
-    $marker = '### heis-standalone ###'
-    $here   = $PSScriptRoot
-    if (-not $here -and $PSCommandPath) { $here = Split-Path -Parent $PSCommandPath }
-    $local  = if ($here) { Join-Path $here 'Heis.ps1' } else { $null }
+    # Prefer a copy beside this script - a clone, or a download of both - and
+    # fall back to the network. Either way it has to carry the marker, so a
+    # captive portal login page is caught here rather than written out and run.
+    $here_ps1 = $null
+    if ($PSScriptRoot) { $here_ps1 = Join-Path $PSScriptRoot 'Heis.ps1' }
 
-    if ($local -and (Test-Path -LiteralPath $local)) {
-        $source = [IO.File]::ReadAllText($local)
-        $from   = $local
+    if ($here_ps1 -and (Test-Path -LiteralPath $here_ps1) -and
+        ([IO.Path]::GetFullPath($here_ps1) -ne [IO.Path]::GetFullPath($target))) {
+        $source = [IO.File]::ReadAllText($here_ps1)
+        $from   = $here_ps1
     } else {
+        Write-Host "Henter Heis.ps1 fra $SourceUrl ..." -ForegroundColor DarkGray
         $source = Invoke-RestMethod -Uri $SourceUrl
         $from   = $SourceUrl
     }
 
     if (-not ($source -is [string]) -or -not $source.Contains($marker)) {
-        throw "what came from $from is not Heis.ps1"
+        throw "det som kom fra $from er ikke Heis.ps1"
     }
 
-    # Written without a BOM, deliberately. Heis.ps1 is pure ASCII, so it does
-    # not need one, and adding one would break anyone who later serves this
-    # copy over HTTP and pipes it into iex.
+    # No BOM: Heis.ps1 is pure ASCII and does not need one, and a BOM would
+    # break anyone who later serves this copy over HTTP and pipes it to iex.
     [IO.File]::WriteAllText($target, $source, [Text.UTF8Encoding]::new($false))
+    Write-Host "Heis.ps1 -> $target" -ForegroundColor Green
 }
 
-Write-Host ("Heisen er installert - kj{0}r `"{1}`" for {2} ta heisen, eller `"{1}`" -? for hjelp" -f $OE, $target, $AA) -ForegroundColor Green
-
-if ($AddToProfile) {
-    $begin = '# >>> heis >>>'
-    $end   = '# <<< heis <<<'
-
-    # Single quotes in a Windows path are legal and would end the string early.
-    $quoted = $target.Replace("'", "''")
-
-    # A single-quoted here-string with placeholders, so none of the block's own
-    # $variables are interpolated while it is being written out. Escaping a
-    # dozen of them by hand is the kind of thing that works until one is missed.
-    $template = @'
-__BEGIN__
-# Added by Install.ps1 -AddToProfile. Delete this block to stop it.
-
-# Take the heis automatically on remote logon. $false reports status only.
-$HEIS_AUTO_ELEVATE = __AUTO__
-$HEIS_PATH         = '__PATH__'
-
-# Live admin check, on purpose not [WindowsPrincipal]::IsInRole: a process
-# token carries the group membership it was born with, so a shell started
-# before elevation answers "not admin" for the rest of its life however
-# elevated the account becomes. A function rather than a variable for the same
-# reason - a variable set at logon is a snapshot that quietly goes stale.
-function Test-IsAdmin {
-    ((net localgroup Administrators 2>$null) -join "`n") -match [regex]::Escape($env:USERNAME)
+# --- wire up and verify ----------------------------------------------------
+# Heis.ps1 owns both settings, so this just passes the answers through. -Verify
+# proves the relay works, and elevates only if nothing is running already.
+# A hashtable splat, not an array. Array splatting passes POSITIONALLY, so
+# @('-Verify') bound the string "-Verify" to the first positional parameter -
+# which is -Exe - and ran the default action against a nonsense path. It even
+# looked like it worked, because Resolve-AbrExe found the running image and
+# healed straight past the bad value.
+$splat = @{ Verify = $true }
+if ($wantProfile) {
+    $splat.AddToProfile       = $true
+    $splat.AutoElevateOnLogin = $wantAuto
 }
 
-# Status comes from Heis.ps1 itself, which reads the countdown window on the
-# desktop rather than inferring anything from this process.
-function Show-HeisStatus {
-    if (-not (Test-Path -LiteralPath $HEIS_PATH)) { return $null }
+Write-Host ''
 
-    $h = & $HEIS_PATH -Status -PassThru
-    if     ($h.Active)  { Write-Host "ABR aktiv - $($h.Remaining) igjen"  -ForegroundColor Green }
-    elseif ($h.InGroup) { Write-Host 'admin, men ingen ABR-nedtelling'    -ForegroundColor DarkYellow }
-    else                { Write-Host 'ikke elevert'                       -ForegroundColor Yellow }
-    return $h
+# Captured rather than left to fall through. Heis.ps1 writes its result to the
+# pipeline while this script reports with Write-Host, and those two do not
+# interleave predictably - the completion line printed before the verification
+# it was reporting on.
+$result = & $target @splat
+if ($LASTEXITCODE -ne 0) {
+    $Host.UI.WriteErrorLine('Installasjonen feilet - se meldingen over.')
+    exit 1
 }
+if ($result) { Write-Host "  $result" -ForegroundColor Green }
 
-$heis = Show-HeisStatus
-
-# SSH_CONNECTION is set by the SSH server for its own sessions and by nothing
-# else - a better test than session id, which also catches services. At the
-# desktop you can take the heis by hand.
-if ($HEIS_AUTO_ELEVATE -and $env:SSH_CONNECTION -and $heis -and -not $heis.Active) {
-    & $HEIS_PATH | Out-Null
-    $heis = Show-HeisStatus      # report where that left things
-}
-__END__
-'@
-
-    $auto  = if ($AutoElevateOnLogin) { '$true' } else { '$false' }
-    $block = $template.Replace('__BEGIN__', $begin).
-                       Replace('__END__',   $end).
-                       Replace('__AUTO__',  $auto).
-                       Replace('__PATH__',  $quoted)
-
-    $dir = Split-Path -Parent $PROFILE
-    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
-    }
-
-    $existing = ''
-    $hadBom   = $false
-    if (Test-Path -LiteralPath $PROFILE) {
-        $bytes    = [IO.File]::ReadAllBytes($PROFILE)
-        $hadBom   = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
-        $existing = [IO.File]::ReadAllText($PROFILE)
-    }
-
-    # Replace any previous block instead of appending a second one.
-    $pattern = [regex]::Escape($begin) + '.*?' + [regex]::Escape($end)
-    $cleaned = ([regex]::Replace($existing, $pattern, '', 'Singleline')).TrimEnd()
-
-    $updated = if ($cleaned) { "$cleaned`r`n`r`n$block`r`n" } else { "$block`r`n" }
-
-    # Preserve whatever BOM the profile already had: removing one breaks a
-    # Windows PowerShell profile containing non-ASCII, and adding one where
-    # there was none is an unexplained diff in someone else's file.
-    [IO.File]::WriteAllText($PROFILE, $updated, [Text.UTF8Encoding]::new($hadBom))
-
-    if ($AutoElevateOnLogin) {
-        Write-Host 'Lagt til i profilen - heisen tas automatisk ved SSH-innlogging' -ForegroundColor Green
-    } else {
-        Write-Host 'Lagt til i profilen - status vises ved innlogging, men heisen tas ikke' -ForegroundColor Green
-    }
-    Write-Host "  $PROFILE" -ForegroundColor DarkGray
-}
+Write-Host ''
+Write-Host ("Installation complete - ha det g{0}y med {1} kj{0}re heis!" -f $OE, $AA) -ForegroundColor Green
+Write-Host ("  {0}" -f $target) -ForegroundColor DarkGray

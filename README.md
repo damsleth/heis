@@ -18,14 +18,14 @@ SSH (session 0)                     interactive session
 AutoHotkey, no agent, no setup, no admin rights. Nothing to clone:
 
 ```powershell
-irm https://raw.githubusercontent.com/damsleth/heis/main/Heis.ps1 | iex
+irm https://heis.d0.si/Heis.ps1 | iex
 ```
 
 `| iex` cannot pass arguments, so for anything but a plain elevate, make a
 script block:
 
 ```powershell
-$h = 'https://raw.githubusercontent.com/damsleth/heis/main/Heis.ps1'
+$h = 'https://heis.d0.si/Heis.ps1'
 & ([scriptblock]::Create((irm $h))) -Status
 & ([scriptblock]::Create((irm $h))) -Finish
 ```
@@ -44,27 +44,46 @@ if (-not $h.Active) { .\Heis.ps1 }
 Branch on `.Active` rather than the message text. On failure nothing reaches
 the pipeline and `$LASTEXITCODE` is 1.
 
-To get the file itself rather than run it from memory, `Install.ps1` drops it
-in the current directory, ready to move wherever you want it:
+### Installing it properly
+
+`Install.ps1` is the first-run script. It asks where to put `Heis.ps1`, whether
+to report status on logon, and whether to take the heis automatically over SSH
+— then fetches the file, applies the answers and verifies the whole path:
 
 ```powershell
-irm https://raw.githubusercontent.com/damsleth/heis/main/Install.ps1 | iex
+irm https://heis.d0.si/install.ps1 | iex
 ```
 
-`-Destination` puts it somewhere else; `-Force` overwrites an existing copy.
+It needs no administrator rights, and neither does anything `Heis.ps1` does.
+Prompts are skipped when there is nobody to answer them — piped input, a
+scheduled task, CI — and the defaults are used; `-Yes` forces that, and `-Path`
+/ `-AddToProfile` / `-AutoElevateOnLogin` pre-answer individual questions.
 
-`-AddToProfile` also writes a block into `$PROFILE` so the heis is taken
-automatically when you log in — but **only over SSH**, keyed on
-`$env:SSH_CONNECTION`, which the SSH server sets and nothing else does. At the
-desktop you can take it by hand, and there is no reason to fire an elevation
-request for every console opened on the machine itself.
+Everything it configures is a setting on `Heis.ps1`, so you never have to
+re-run the installer to change your mind:
+
+```powershell
+.\Heis.ps1 -AddToProfile                          # report status on logon
+.\Heis.ps1 -AddToProfile -AutoElevateOnLogin $false   # report, but do not elevate
+.\Heis.ps1 -Verify                                # check the whole path works
+```
+
+The logon block reports live status, and takes the heis when there is none —
+but **only over SSH**, keyed on `$env:SSH_CONNECTION`, which the SSH server
+sets and nothing else does. At the desktop you can take it by hand, and there
+is no reason to fire an elevation request for every local console.
 
 The block is delimited by markers, so re-running replaces it rather than adding
-another, and the path stays current. Delete the block to stop it. It edits the
-profile of the host it runs under — `pwsh` and Windows PowerShell have separate
-ones — so run it under the shell you actually log in with.
+another. Delete the block to stop it. It edits the profile of the host it runs
+under — `pwsh` and Windows PowerShell have separate ones — so run it under the
+shell you actually log in with.
 
-Or download it and run it:
+`-Verify` is non-destructive when a session is already running: the countdown
+on screen is already proof, and ending it to prove it again would cost a live
+admin session. With nothing running it does a real elevation, which proves the
+same thing and is what you wanted anyway.
+
+Or just download it and run it:
 
 ```powershell
 .\Heis.ps1              # elevate, unless already elevated
