@@ -1,28 +1,75 @@
-# ahk — drive a Windows desktop from SSH
-
-An SSH shell on Windows lands in session 0, which has no desktop. Nothing it
-does can reach the screen. This repo closes that gap: a resident AutoHotkey
-agent runs inside the interactive session and executes commands dropped into a
-file queue, so an SSH shell — or Claude Code running over one — can drive the
-desktop it cannot touch directly.
+<div align="center">
 
 ```
-SSH (session 0)                     interactive session
-  Send-AhkCommand.ps1  --queue/-->  taskbar-click.ahk  --> the desktop
-                       <--done/---
+  _   _ _____ ___ ____
+ | | | | ____|_ _/ ___|
+ | |_| |  _|  | |\___ \
+ |  _  | |___ | | ___) |
+ |_| |_|_____|___|____/
 ```
 
-## Just want to elevate? One file, nothing to install
+**elevation, express service**
 
-`Heis.ps1` does the Admin By Request dance on its own — no
-AutoHotkey, no agent, no setup, no admin rights. Nothing to clone:
+Admin By Request elevation in one line.
+No install, no agent, no admin rights, no stairs.
+
+</div>
 
 ```powershell
-irm https://heis.d0.si/Heis.ps1 | iex
+irm heis.d0.si/install.ps1 | iex
 ```
 
-`| iex` cannot pass arguments, so for anything but a plain elevate, make a
-script block:
+```
+heisen er oppe - 05:59:59 igjen
+```
+
+*heis* is Norwegian for lift. That is the whole joke, and the whole tool: you
+press one button and it takes you to the top.
+
+## Before you press
+
+The lift only runs in the building it is installed in. You need a Windows
+machine — a Cloud PC (Windows 365 / AVD) is what this was built on — with
+**Admin By Request** already installed, because ABR's dialogs are what it
+clicks. Without ABR there is no lift to call, just an empty shaft.
+
+It automates a privilege-elevation prompt. Read [SECURITY.md](SECURITY.md)
+before you run it. If you do not know what this does, it is not for you.
+
+## What it does
+
+Starts Admin By Request with `/Elevate`, clicks through the dialogs for you —
+`Yes`, then `OK` — and verifies the countdown actually started before it
+reports back. Do not guess, check. Then you know the lift really arrived.
+
+| | |
+| --- | --- |
+| **0 dependencies** | One file. No AutoHotkey, no agent to keep alive, nothing to clean up. |
+| **0 admin rights** | You do not need to be admin to ask to become one. That is rather the point. |
+| **No connection needed** | Works with RDP disconnected and the screen dark. Dialogs are driven with window messages, not a mouse. |
+| **Session 0 → top floor** | From an SSH shell that cannot see the desktop, it takes itself up into the interactive session. |
+
+## Floors
+
+Every button has its floor:
+
+| button | the lift says |
+| --- | --- |
+| *(none)* | `heisen er oppe - 05:59:59 igjen` |
+| `-Status` | `heisen går allerede - 05:12:03 igjen` |
+| `-Finish` | `heisen er nede` |
+| `-Status` | `ikke elevert` |
+
+```powershell
+.\Heis.ps1              # elevate, unless you are already up
+.\Heis.ps1 -Status      # which floor are we on
+.\Heis.ps1 -Finish      # take it down, end the session
+.\Heis.ps1 -Verify      # check the whole shaft works
+.\Heis.ps1 -Uninstall   # remove the relay task it registers
+```
+
+`| iex` cannot pass arguments — it only drops you on the ground floor
+(elevate). For any other button, build a script block:
 
 ```powershell
 $h = 'https://heis.d0.si/Heis.ps1'
@@ -30,8 +77,66 @@ $h = 'https://heis.d0.si/Heis.ps1'
 & ([scriptblock]::Create((irm $h))) -Finish
 ```
 
-Either way it writes a copy to `%LOCALAPPDATA%\Heis`, because the relay task
-needs a file on disk to point at.
+## Installing
+
+`Install.ps1` asks where to put `Heis.ps1`, whether to report status on logon,
+and whether to take the lift automatically over SSH — then fetches the file,
+applies the answers and verifies the whole path.
+
+```powershell
+irm heis.d0.si/install.ps1 | iex
+```
+
+Prompts are skipped when there is nobody to answer them — piped input, a
+scheduled task, CI — and the defaults are used. `-Yes` forces that; `-Path`,
+`-AddToProfile` and `-AutoElevateOnLogin` pre-answer individual questions.
+
+Everything it configures is a setting on `Heis.ps1`, so you never re-run the
+installer to change your mind:
+
+```powershell
+.\Heis.ps1 -AddToProfile                               # status on logon
+.\Heis.ps1 -AddToProfile -AutoElevateOnLogin $false    # status, but do not elevate
+```
+
+## The logon block
+
+`-AddToProfile` writes a marked block into `$PROFILE` that reports live status,
+and takes the lift when there is none — but **only over SSH**, keyed on
+`$env:SSH_CONNECTION`, which the SSH server sets and nothing else does. At the
+desktop you can press the button yourself; there is no reason to file an
+elevation request for every local console.
+
+Re-running replaces the block rather than adding another. Delete the block to
+stop it. It edits the profile of the host it runs under — `pwsh` and Windows
+PowerShell have separate ones — so run it under the shell you log in with.
+
+Auto-elevation means holding admin far more of the time than elevating by hand.
+That is a real trade; [SECURITY.md](SECURITY.md) spells it out.
+
+## How it gets up there
+
+An SSH shell lands in **session 0** — the basement, no screen. Nothing it does
+reaches the desktop, because window handles do not cross a session boundary. So
+the lift takes a detour:
+
+```
+  ▲  interactive session   relay fires, clicks the dialogs with window
+  |                        messages. No mouse to move, so darkness is fine.
+  ·  scheduled task        registered on first use. The bridge across the
+  |                        session boundary that window handles will not cross.
+  0  session 0 — SSH       you are here. Cannot see the desktop.
+                           Presses the button anyway.
+```
+
+The only requirement is that an interactive session **exists**. It may be
+disconnected — that is the whole point — but somebody has to have logged in
+since the last reboot. A copy is written to `%LOCALAPPDATA%\Heis`, because the
+relay needs a file on disk to point at.
+
+No administrator rights are needed for any of it.
+
+## Scripting it
 
 Output goes to the pipeline, so it drops into a `$PROFILE` cleanly:
 
@@ -44,190 +149,19 @@ if (-not $h.Active) { .\Heis.ps1 }
 Branch on `.Active` rather than the message text. On failure nothing reaches
 the pipeline and `$LASTEXITCODE` is 1.
 
-### Installing it properly
-
-`Install.ps1` is the first-run script. It asks where to put `Heis.ps1`, whether
-to report status on logon, and whether to take the heis automatically over SSH
-— then fetches the file, applies the answers and verifies the whole path:
-
-```powershell
-irm https://heis.d0.si/install.ps1 | iex
-```
-
-It needs no administrator rights, and neither does anything `Heis.ps1` does.
-Prompts are skipped when there is nobody to answer them — piped input, a
-scheduled task, CI — and the defaults are used; `-Yes` forces that, and `-Path`
-/ `-AddToProfile` / `-AutoElevateOnLogin` pre-answer individual questions.
-
-Everything it configures is a setting on `Heis.ps1`, so you never have to
-re-run the installer to change your mind:
-
-```powershell
-.\Heis.ps1 -AddToProfile                          # report status on logon
-.\Heis.ps1 -AddToProfile -AutoElevateOnLogin $false   # report, but do not elevate
-.\Heis.ps1 -Verify                                # check the whole path works
-```
-
-The logon block reports live status, and takes the heis when there is none —
-but **only over SSH**, keyed on `$env:SSH_CONNECTION`, which the SSH server
-sets and nothing else does. At the desktop you can take it by hand, and there
-is no reason to fire an elevation request for every local console.
-
-The block is delimited by markers, so re-running replaces it rather than adding
-another. Delete the block to stop it. It edits the profile of the host it runs
-under — `pwsh` and Windows PowerShell have separate ones — so run it under the
-shell you actually log in with.
-
-`-Verify` is non-destructive when a session is already running: the countdown
-on screen is already proof, and ending it to prove it again would cost a live
-admin session. With nothing running it does a real elevation, which proves the
-same thing and is what you wanted anyway.
-
-Or just download it and run it:
-
-```powershell
-.\Heis.ps1              # elevate, unless already elevated
-.\Heis.ps1 -Status
-.\Heis.ps1 -Finish      # end the session
-.\Heis.ps1 -Uninstall   # remove the relay task it registers
-```
-
-Works from the desktop and over SSH. Over SSH it relays itself into the
-interactive session through a scheduled task it registers on first use, because
-window handles do not cross a session boundary. Cold start on a machine with
-nothing installed takes about a second.
-
-It works with nobody connected over RDP — verified, with the session in `Disc`
-state and no input desktop. The one requirement is that an interactive session
-exists: it may be disconnected, but somebody has to have logged in since the
-last reboot.
-
-The rest of this repo is the toolkit that was built to work all of that out,
-and is what you want for exploring a new app's windows interactively.
-
-## Quick start
-
-```powershell
-.\Install-AhkAgentTask.ps1          # start the agent on interactive logon
-.\Send-AhkCommand.ps1 -List         # who is live, and can they receive input
-.\Send-AhkCommand.ps1 status
-```
-
-Click through an app's dialogs, without coordinates, without anyone connected:
-
-```powershell
-.\Run-Macro.ps1 -Exe C:\app\thing.exe `
-                -ConfirmWindow 'Confirm Action' -ConfirmButton Yes `
-                -OkWindow 'Result' -OkButton OK
-```
-
-## The one thing to understand
-
-Two kinds of automation, and they fail in completely different places.
-
-| | mechanism | works when disconnected |
-| --- | --- | --- |
-| `click-icon`, `send` | `SendInput` | **no** |
-| `press-text`, `control-settext`, `run`, `wait-window` | window messages | **yes** |
-
-Synthetic input reaches only the session's live input desktop. Lock the
-session, disconnect RDP, or park it on a console and it goes nowhere — and
-Windows reports success the whole time. Window messages do not care.
-
-So: **build macros out of the message-based verbs.** They work whether or not
-anyone is watching, and they address buttons by the caption a person reads
-rather than by a coordinate, which means they also survive the session changing
-resolution, DPI or monitor. Keep `click-icon` and `send` for the taskbar and
-for things that genuinely need real input, and expect them only to work while
-someone is connected.
-
-`HEADLESS-SETUP.md` covers what survives a disconnect, how it was measured, and
-what is and is not possible on a Windows 365 Cloud PC.
-
-## Commands
-
-Send any of these with `.\Send-AhkCommand.ps1 <command>`. Multi-part arguments
-are separated with `|`.
-
-**Diagnostics**
-
-| command | |
-| --- | --- |
-| `ping` | is the agent alive |
-| `status` | session, desktop, screen, DPI, taskbar geometry |
-| `probe-input` | does synthetic input actually land — by experiment, not by name |
-| `mouse-pos` | cursor position and the window under it |
-
-**Finding things**
-
-| command | |
-| --- | --- |
-| `windows [hidden]` | visible windows, or everything |
-| `win-pos <win>` | position and size |
-| `control-list <win>` | control names |
-| `buttons <win>` | control names **with their captions** — start here |
-
-**Acting — message-based, works headless**
-
-| command | |
-| --- | --- |
-| `run <command>` | launch a program |
-| `wait-window <win> \| <secs>` | block until it appears |
-| `wait-gone <win> \| <secs>` | block until it closes |
-| `press-text <win> \| <caption>` | press a button by what it says |
-| `control-press <win> \| <ctl>` | `BM_CLICK` a button by name |
-| `control-click <win> \| <ctl>` | post a click to a control |
-| `control-settext <win> \| <ctl> \| <text>` | set text exactly |
-| `control-text <win> \| <ctl>` | read text |
-| `activate <win>` | bring to front |
-
-**Acting — synthetic input, connected only**
-
-| command | |
-| --- | --- |
-| `click-icon [n]` | click the nth taskbar icon |
-| `preview-icon [n]` | move there without clicking |
-| `send <keys>` | send keystrokes |
-| `control-send <win> \| <ctl> \| <keys>` | unreliable headless — prefer `control-settext` |
-
-**Lifecycle:** `reload`, `exit`. Hotkeys in the session: `F8` preview, `F9`
-click, `F10` inspect cursor, `F12` reload, `Ctrl+Alt+Q` exit.
-
-## Matching windows by title
-
-Titles match on **contains** by default, so `Admin By Request` also matches
-`Admin By Request Confirm` — and which one you get depends on z-order, so it
-can work for weeks and then press the wrong dialog. Prefix the spec with
-`exact:` whenever one title is a substring of another:
-
-```powershell
-.\Send-AhkCommand.ps1 'press-text exact: Admin By Request | OK'
-```
-
-For dialogs that appear in sequence, `wait-gone` on the first before waiting for
-the second removes the ambiguity entirely, and is worth doing anyway so a macro
-cannot race ahead of a dialog that is still closing.
-
-## Targeting
-
-Agents advertise themselves in `agents/<session>.json`. With more than one live,
-an unqualified command prefers a usable desktop, then the remote one over the
-console — so a macro you debug over RDP runs unattended unchanged. Pin it with
-`-Rdp`, `-Console`, `-Session <n>` or `-User <name>`. Two different people's
-desktops are never guessed between; that refuses.
-
 ## Files
 
 | | |
 | --- | --- |
-| `taskbar-click.ahk` | the agent — runs in the interactive session |
-| `Send-AhkCommand.ps1` | the client — runs anywhere, including SSH |
-| `Run-Macro.ps1` | launch an app and click through its dialogs |
-| `Install-AhkAgentTask.ps1` | start the agent on interactive logon |
-| `Heis.ps1` | **the deliverable** — elevation in one file, no dependencies |
-| `Install.ps1` | drops `Heis.ps1` into the current directory |
-| `heis_ahk.ps1` | the same thing built on the agent, kept as a worked example |
-| `HEADLESS-SETUP.md` | running unattended, and the limits |
-| `AGENTS.md` | notes for whoever works on this next |
+| `Heis.ps1` | the lift. One file, no dependencies. |
+| `Install.ps1` | first-run script: asks, fetches, wires up, verifies. |
+| `SECURITY.md` | what it does, what it does not, and what it changes. |
+| `AGENTS.md` | why it is built this way. Read before editing. |
 
-`agents/`, `queue/` and `logs/` are runtime state and are not tracked.
+♪ ding ♪
+
+<div align="center"><sub>
+
+[heis.d0.si](https://heis.d0.si) · [WTFPL](LICENSE)
+
+</sub></div>

@@ -1,213 +1,189 @@
 # Notes for whoever works on this next
 
-Read `README.md` first for what the thing does. This file is the hard-won part:
-facts that cost real debugging to establish, and that are not visible in the
-code.
+`README.md` says what it does. This file is the hard-won part: things that cost
+real debugging to establish and are not visible in the code.
 
-## How to test a change
+This repo started as a general AutoHotkey automation toolkit and narrowed to
+one job. The agent, its command queue and its client are gone — if you ever
+need them, they are in the git history before the single-purpose rewrite. What
+survived is the reasoning, because most of it is why `Heis.ps1` is shaped the
+way it is.
 
-There is no test suite. The agent is live; drive it.
+## The two kinds of automation
 
-```powershell
-.\Send-AhkCommand.ps1 reload          # pick up your edit
-Start-Sleep -Seconds 3                # reload is async, the reply beats it
-.\Send-AhkCommand.ps1 status
-```
+This is the load-bearing fact. Everything else follows from it.
 
-Before claiming an input-related change works, check what state the session is
-actually in — most "it does nothing" reports are the session, not the code:
+| | mechanism | works disconnected |
+| --- | --- | --- |
+| window messages — `BM_CLICK`, `WM_SETTEXT`, enumeration | posted to a control | **yes** |
+| synthetic input — `SendInput`, mouse, keystrokes | needs the input desktop | **no** |
 
-```powershell
-.\Send-AhkCommand.ps1 probe-input
-```
+Synthetic input reaches only the session's *live input desktop*. Lock the
+session, disconnect RDP, or park it on a console and input goes nowhere — and
+**Windows reports success the whole time**. `SendInput` returns 1 while
+delivering nothing.
 
-Parsing replies in PowerShell: the reply is **one multi-line string object**, so
-`Select-String '^result:'` matches nothing and `-like 'result:*'` returns only
-that line, silently dropping multi-line output. Split on newline first. Also
-avoid naming a helper function `R` — that is the built-in alias for
-`Invoke-History`, and it fails in a way that looks like your code is broken.
+Window messages do not care. That is the only reason this works with the RDP
+client closed, and it is why `Press-Button` posts `BM_CLICK` instead of
+clicking a coordinate. Never "improve" it into a mouse click.
 
-## The session model
+Proven end to end with the session in `Disc` state and no input desktop at all:
+finish an ABR session, elevate again, both dialogs clicked, nobody connected.
 
-- SSH lands in **session 0**. It has no input desktop, and window handles do not
-  cross session boundaries — so a process there can neither inject input into
-  nor enumerate windows in the desktop session. That is the entire reason this
-  repo exists, and the reason the control verbs live in the agent rather than in
-  a script run over SSH.
-- The agent refuses to start in session 0 and reports on stdout, never `MsgBox`
-  — a modal dialog there blocks forever with nobody to dismiss it.
-- Heartbeats in `agents/<session>.json` are the source of truth for which
-  session to talk to. Prefer them to parsing `query user`, whose column layout
-  shifts once a session disconnects.
+### The corollary that keeps biting
 
-## Input: the thing that keeps biting
+**A healthy-looking desktop does not mean input works.** Session state
+`Active`, `OpenInputDesktop` succeeds, desktop is `Default`, `SendInput`
+returns 1 — and the cursor does not move.
 
-**A healthy-looking desktop does not mean input works.** Every name-based
-indicator can say fine while input goes nowhere:
+The usual cause is **UIPI**: an elevated foreground window silently blocks
+injection from a medium-integrity process. Reproduced by toggling focus —
+elevated console in front, nothing lands; taskbar in front, it works. It does
+not affect message-based automation, which is another reason to prefer it.
 
-- session state `Active`
-- `OpenInputDesktop` succeeds, desktop is `Default`
-- `SendInput` returns 1 — it reports inserting the event
+That one cost an entire investigation. A Cloud PC console was declared
+incapable of receiving input on the strength of a failed probe, while an
+elevated PowerShell console sat in the foreground the whole time. Two candidate
+causes, never separated, and a confident wrong conclusion written down as fact.
+**When something fails, enumerate the causes before picking one.**
 
-...and the cursor does not move.
+## Session model
 
-**The usual cause is UIPI, not the session.** An elevated foreground window
-blocks injection from this medium-integrity agent, silently. Reproduced by
-toggling focus: elevated console in front → `landed=NO`; taskbar in front →
-`landed=yes`. So when input "stops working", check `active-window` *before*
-suspecting the session. The agent cannot recover on its own either — UIPI blocks
-`SetForegroundWindow` upward, so `activate` cannot move focus off an elevated
-window and a human has to click something.
+- SSH lands in **session 0**. Window handles do not cross a session boundary,
+  so a process there can neither see nor message the desktop's windows. That is
+  the entire reason the relay task exists.
+- The relay is a scheduled task set to *run only when the user is logged on*.
+  **No administrator rights are needed** — verified: creating a task as a
+  non-admin over SSH succeeds.
+- An interactive session must exist, though it may be disconnected. Checked up
+  front via an `explorer.exe` outside session 0, because `schtasks /run`
+  reports success even when nothing can start and the only other symptom is a
+  75-second silence.
 
-This burned a whole investigation: a Cloud PC console was declared incapable of
-receiving input on the strength of `landed=NO`, while an elevated PowerShell
-console sat in the foreground the entire time. Two candidate causes, never
-separated. See the withdrawal in `HEADLESS-SETUP.md`. **When something reports
-`landed=NO`, enumerate the causes before concluding one of them.**
+## Recover instead of refusing
 
-Note also that `IsProcessElevated` must use `PROCESS_QUERY_LIMITED_INFORMATION`
-(`0x1000`), not `PROCESS_QUERY_INFORMATION` (`0x0400`) — the latter is refused
-across an integrity boundary, so it returns "not elevated" for exactly the
-processes that matter. It reports `unknown` rather than `false` on failure for
-the same reason.
-
-So `InputUsable()` **probes**: it nudges the cursor 4px, reads the position back
-and restores it. That is the only check that catches input which is accepted and
-then discarded. Do not replace it with a cheaper name-based test; that is
-exactly the bug it exists to catch. The result is cached against session
-topology (input desktop name + whether the session is on the console), because
-that is the only thing the answer depends on.
-
-Corollary for the whole codebase: **a command that cannot act must fail, not
-return `ok`.** A silent no-op that reports success is the single hardest failure
-to diagnose here, and most of this file is the cost of having shipped one.
-
-## DPI
-
-- `A_ScreenWidth`/`A_ScreenHeight` are live. **`A_ScreenDPI` is cached at
-  process start** and never updates. An agent started at 96 kept reporting 96
-  after the session moved to a 192 display. Use `SystemDpi()`.
-- Geometry maths must scale by the DPI of the **window's own monitor**
-  (`WindowDpi(tray)`), not the system value. This is not cosmetic: on the
-  console at 96 with a stale system DPI of 192, using the system value gives
-  pitch 88 instead of 44 and clicks land on the wrong icon.
-- Awareness is pinned at **thread** level. The process-level call is refused
-  because stock `AutoHotkey64.exe` is manifested system-DPI-aware and a manifest
-  cannot be overridden at runtime. The thread call is not so bound.
-- `GetAwarenessFromDpiAwarenessContext` has only three values, so a successful
-  Per-Monitor **v2** pin reports as plain `per-monitor`. That is correct, not a
-  failure.
-
-## Message-based automation
-
-Works with no input desktop at all: `run`, `windows`, `win-pos`,
-`control-list`, `buttons`, `control-settext`, `control-text`, `control-press`,
-`control-click`, `activate`, `wait-window`, `press-text`.
-
-- **`control-send` is not in that list.** It synthesises keystrokes, so it still
-  depends on modifier state: `HEADLESS-OK` arrived as `hEAD`. Use
-  `control-settext`, which is one `WM_SETTEXT`.
-- **Address buttons by caption (`press-text`), not by ClassNN.** Index ordering
-  is an artefact of creation order and is not guessable: in Character Map,
-  `Button3` is *Advanced view* and `Button4` is *Reset*. Two conclusions in this
-  repo's history — both "this primitive is broken headless" — were wrong tests
-  pressing the wrong button. Verify a control's caption with `buttons` before
-  concluding anything about a primitive.
-- **Title matching is "contains", and it is z-order dependent.** Measured: a
-  substring from the *middle* of a title matches. So `Admin By Request` also
-  matches `Admin By Request Confirm`, and which window you get depends on which
-  was activated last — it picked the right one until the other was brought to
-  the front, then silently picked the wrong one. Prefix a spec with `exact:`
-  whenever one title is a substring of another, and prefer `wait-gone` on the
-  first dialog before waiting for the second. `ResolveWin` sets the mode per
-  call rather than globally, so one `exact:` cannot change how later commands
-  match.
-- It is per-app. Classic Win32 responds; WinUI, Electron and Chromium draw their
-  own controls with no handles, so `buttons` comes back empty and none of it
-  applies.
-- `wait-window` occupies the agent for its whole duration — one command at a
-  time. The client's `-TimeoutSec` must exceed the wait or it gives up on a
-  command that would have succeeded.
-- **The agent stops heartbeating while it is busy.** It is single-threaded, and
-  `ControlGetText`/`WinGetControls` use `SendMessage`, which blocks against an
-  app showing a modal dialog. A short staleness cutoff therefore declares a
-  healthy agent dead mid-macro — it happened during the ABR run. Liveness is
-  the pid; heartbeat age only distinguishes busy from dead, and the reply
-  timeout is what actually catches a wedged agent.
-
-## Environment quirks seen here
-
-- This Cloud PC user is **not a local administrator**, so `tscon`,
-  `Get-ScheduledTask`, `Get-CimInstance`, `Get-WinEvent` and `Win32_Process` all
-  fail from SSH. Use `schtasks` and registry reads instead of the CIM cmdlets;
-  they work unprivileged.
-- `git init` was run elevated, so `.git` is owned by `BUILTIN\Administrators`
-  and git needs `safe.directory` set for the working user.
-- Windows Script Host is policy-blocked — a `.vbs` opens a *Windows Script Host
-  Settings* dialog instead of running. Do not build test fixtures on `wscript`;
-  launch a second AutoHotkey script for a throwaway dialog instead.
-- RDP resolution and DPI change under a running agent as the client window is
-  resized or moved between displays. Never cache geometry.
-- **Documents is redirected into OneDrive, so `$PROFILE` is a cloud
-  placeholder.** `Get-Item` reports `Length 0` and a stale `LastWriteTime` for
-  a dehydrated file — the real profile read 0 bytes while holding 2257 bytes of
-  content, which looks exactly like having just destroyed someone's profile.
-  `[IO.File]::ReadAllBytes`/`ReadAllText` hydrate it and return the truth, which
-  is what the profile code already uses. Never branch on `.Length` for a file
-  under OneDrive.
-
-## Heis.ps1
-
-The single-file version, with no AutoHotkey and no resident agent. Two traps
-cost real time and are easy to reintroduce:
-
-- **It must be saved UTF-8 *with BOM*.** The relay task runs Windows PowerShell
-  5.1, which reads a `.ps1` as ANSI unless a BOM says otherwise, so the
-  Norwegian strings arrive mangled (`går` → `gÃ¥r`) before anything is even
-  written. Any editor that helpfully strips the BOM breaks it.
-- **The scheduled task names the account by SID, not `DOMAIN\user`.** An SSH
-  login reports `USERDOMAIN` as `WORKGROUP`, which does not resolve, and Task
-  Scheduler rejects it with "No mapping between account names and security
-  IDs". `[WindowsIdentity]::GetCurrent().User.Value` is the same however the
-  session was established.
-
-It also hardcodes Windows PowerShell's absolute path rather than `$PSHOME`,
-which under pwsh 7 points at `pwsh.exe` — not something a downloaded copy can
-assume is installed.
-
-### It recovers instead of refusing
-
-The rule for this script is that a plain `Heis.ps1` with no arguments should
-just work, so it repairs what it can rather than reporting it:
+A plain `Heis.ps1` with no arguments should just work, so it repairs what it
+can rather than reporting it.
 
 - **Drive the outcome, not a script of steps.** `Invoke-DialogLoop` answers
-  whatever known dialog is on screen until the countdown appears. The previous
-  version replayed one exact sequence and would sit waiting for a second dialog
-  that does not always come — then call a run that had already succeeded a
-  failure.
-- **Several captions per button.** `Yes`/`Ja`/`Continue`, so a localised or
+  whatever known dialog is on screen until the countdown appears. An earlier
+  version replayed one exact sequence and would wait for a second dialog that
+  does not always come — then call a run that had already succeeded a failure.
+- **Several captions per button** (`Yes`/`Ja`/`Continue`), so a localised or
   reworded dialog still gets answered.
 - **Find the exe, do not assert it.** Running image first, then both Program
   Files roots, then a depth-limited search.
 - **Fall back to a second task name.** The canonical task can be unwritable
-  through no fault of the run, and a spare task is cheaper than a dead end.
-- **Fail fast on what cannot be repaired.** No interactive session is checked
-  up front — an `explorer.exe` outside session 0 — because `schtasks /run`
-  reports success regardless and the old code only noticed 75s later.
+  through no fault of the run — see below — and a spare task beats a dead end.
+- **Fail fast only on what cannot be repaired**, and say what would fix it.
 
-Two things to keep in mind when editing it:
+## Things that look harmless and are not
 
-- `Get-AbrState` shells out to `net localgroup`. Never call it from a poll
-  loop; use `Get-AbrCountdown`, which only looks at windows. The loop runs
-  several times a second and was briefly spawning that many processes.
-- The in-session side ignores a `request.json` older than three minutes.
+- **Do not re-register the relay task on every run.** A task first created
+  while ABR had granted admin carries a security descriptor an unelevated
+  account cannot overwrite, so every later run from a plain SSH shell died on
+  "Access is denied" — while the existing task was perfectly good and would
+  have worked untouched. Read its action first; only register when missing or
+  wrong.
+- **Never `Get-AbrState` from a poll loop.** It shells out to `net localgroup`.
+  The dialog loop runs several times a second and was briefly spawning that
+  many processes. Use `Get-AbrCountdown`, which only looks at windows.
+- **Match dialog titles exactly.** ABR reuses `Admin By Request Confirm` for
+  both the elevation prompt and the finish prompt, and `Admin By Request` is a
+  substring of it. A "contains" match picks by z-order: right until the day it
+  is not, and then it presses a button on the wrong dialog.
+- **Address buttons by caption, never by index.** Ordering is an artefact of
+  creation order. On ABR's confirm dialog the buttons are **No first, Yes
+  second**. Two conclusions in this repo's history — both "this primitive is
+  broken" — were wrong tests pressing the wrong button.
+- **`Press-Button` considers only BUTTON-class controls.** A substring match
+  over every control will happily find "OK" inside a label and click nothing.
+- **The in-session side ignores a `request.json` older than three minutes.**
   Without that, anything that starts the task — a person, a stale trigger —
   replays the last request and silently elevates.
+
+## Encoding: pure ASCII, no BOM
+
+Both scripts must stay **pure ASCII with no BOM**. This is not tidiness; it is
+the only encoding that survives both ways they are run:
+
+- As a file under **Windows PowerShell 5.1** — which the relay uses — a `.ps1`
+  is read as ANSI unless it carries a BOM, mangling every non-ASCII character.
+- **Piped from a URL**, `irm … | iex` keeps the BOM as a *character*, and
+  PowerShell then refuses to parse the script at all. It fails to recognise the
+  comment-based help and reports `Missing expression after unary operator '-'`
+  from inside the help text a dozen lines below, which points nowhere useful.
+
+A BOM fixes the first and breaks the second. The Norwegian letters in output
+are composed from character codes (`$AA`, `$OE`) so neither is needed. Do not
+type an `å` back in.
+
+## Other traps, all hit at least once
+
+- **The scheduled task names the account by SID**, not `DOMAIN\user`. An SSH
+  login reports `USERDOMAIN` as `WORKGROUP`, which does not resolve, and Task
+  Scheduler answers "No mapping between account names and security IDs".
+- **Hardcode Windows PowerShell's absolute path**, not `$PSHOME` — under pwsh 7
+  that points at `pwsh.exe`, which a downloaded copy cannot assume exists.
+- **`$MyInvocation.MyCommand.ScriptBlock` describes the CALLER under `iex`.**
+  It returned a few hundred bytes of the invoking wrapper, which got written
+  out as `Heis.ps1` and run by the relay. Symptom: a silent 75-second timeout.
+  Hence the marker check in `Resolve-SelfPath`.
+- **Splat a hashtable, not an array.** Array splatting passes *positionally*:
+  `@('-Verify')` bound the string to `-Exe` and ran the default action against
+  a nonsense path. It looked like it worked, because the exe lookup healed past
+  the bad value — self-healing hides bugs as well as it hides faults.
+- **`[WindowsPrincipal]::IsInRole` is a snapshot.** A process token carries the
+  group membership it was born with, so a shell started before elevation
+  answers "not admin" for the rest of its life. Use live group membership, and
+  prefer a function over a variable so it cannot go stale.
+- **`$PROFILE` may be a OneDrive placeholder.** With Documents redirected,
+  `Get-Item` reports `Length 0` and a stale `LastWriteTime` for a dehydrated
+  file — the profile read as 0 bytes while holding 2257 bytes of content, which
+  looks exactly like having just destroyed it. `ReadAllBytes`/`ReadAllText`
+  hydrate it. Never branch on `.Length` there.
+- **Raw URLs are case-sensitive, and `core.ignorecase` hides renames.** Git
+  recorded `heis.ps1` while the disk said `Heis.ps1`, which would have 404'd
+  the self-fetch in a way that looks nothing like a case problem.
+- **GitHub's raw CDN caches for about five minutes.** A push then a fetch will
+  serve the old file, including to a cache-buster. Twice this looked like a fix
+  not working.
+
+## Environment this was built on
+
+A Windows 365 Cloud PC, and some of it is specific to that:
+
+- The user is **not a local administrator**, so `tscon`, `Get-ScheduledTask`,
+  `Get-CimInstance`, `Get-WinEvent` and `Win32_Process` all fail from SSH. Use
+  `schtasks` and registry reads; they work unprivileged.
+- **Windows Script Host is policy-blocked** — a `.vbs` opens a *Windows Script
+  Host Settings* dialog instead of running. Do not build test fixtures on it.
+- RDP resolution and DPI change under a running process as the client window is
+  resized or moved between displays. Never cache geometry.
+- `tscon`-ing a disconnected session onto the console was tried and removed. It
+  exists to make `SendInput` work unattended, which message-based automation
+  makes unnecessary — and the task fired on reconnect too, pulling the session
+  back and locking the machine out of RDP entirely.
+
+## Testing
+
+There is no test suite; drive it.
+
+```powershell
+.\Heis.ps1 -Status          # cheapest round-trip through the relay
+.\Heis.ps1 -Verify          # non-destructive if a session is already running
+```
+
+Prompts are skipped when stdin is redirected, so `Install.ps1` is safe to run
+from automation — it takes the defaults. Use `-Yes` to be explicit.
+
+Before claiming an elevation change works, check what state the session is
+actually in first. Most "it did nothing" reports are the session, not the code.
 
 ## Style
 
 Comments explain **why**, especially where the code looks like it could be
-simpler — most of the odd-looking choices here are load-bearing and are
-annotated with the failure that motivated them. Keep that. PowerShell must parse
-under Windows PowerShell 5.1: no ternaries, and no `if`-expressions in hashtable
+simpler — most of the odd-looking choices here are load-bearing and annotated
+with the failure that motivated them. Keep that. PowerShell must parse under
+Windows PowerShell 5.1: no ternaries, and no `if`-expressions in hashtable
 values.

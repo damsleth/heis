@@ -118,6 +118,8 @@ if ($wantProfile) {
 }
 
 # --- fetch -----------------------------------------------------------------
+# Must match $script:Marker in Heis.ps1 exactly - see the note there on why it
+# still says "standalone".
 $marker = '### heis-standalone ###'
 $target = Join-Path $destination 'Heis.ps1'
 

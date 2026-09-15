@@ -1,3 +1,9 @@
-agents/
-logs/
-queue/
+# Heis keeps its runtime state in %LOCALAPPDATA%\Heis, not here, so there is
+# little for this to do. Editor and OS leftovers, and a local copy of the
+# script if you test an install into the repo directory.
+*.bak
+*.bak-*
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

@@ -21,12 +21,12 @@
 
     It can also be run straight off a URL, with no file saved by hand:
 
-        irm https://example.com/heis | iex
+        irm https://heis.d0.si/Heis.ps1 | iex
 
     Note that `| iex` cannot pass arguments. For anything but a plain elevate,
     build a script block instead:
 
-        & ([scriptblock]::Create((irm https://example.com/heis))) -Status
+        & ([scriptblock]::Create((irm https://heis.d0.si/Heis.ps1))) -Status
 
     Either way the script writes a copy of itself to LOCALAPPDATA\Heis, because
     the relay task has to point at a file on disk.
@@ -107,6 +107,12 @@ $script:TaskName        = $script:TaskNameDefault
 $script:StateDir = Join-Path $env:LOCALAPPDATA 'Heis'
 
 # Sentinel proving a recovered blob really is this script. Do not remove.
+#
+# It still says "standalone" from when this file was Heis-Standalone.ps1, and
+# is deliberately left that way: Install.ps1 and any deployed copy check for
+# this exact string, so renaming it would make a cached installer reject a
+# fresh script, and a fresh installer reject a copy already on disk. It is an
+# opaque token nobody reads, and churning it buys nothing.
 $script:Marker = '### heis-standalone ###'
 
 # This script's own source text, captured at script scope because $MyInvocation
@@ -115,7 +121,7 @@ $script:Marker = '### heis-standalone ###'
 # Needed because the relay task has to point at a file on disk, and there is no
 # file when the script arrives down a pipe:
 #
-#     irm https://example/heis | iex
+#     irm https://heis.d0.si/Heis.ps1 | iex
 #
 # So Resolve-SelfPath writes this text out and points the task there. Doing it
 # for a file-based run too, rather than using $PSCommandPath, keeps the task
