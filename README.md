@@ -23,15 +23,16 @@ irm heis.d0.si/install.ps1 | iex
 heisen er oppe - 05:59:59 igjen
 ```
 
-*heis* is Norwegian for lift. That is the whole joke, and the whole tool: you
-press one button and it takes you to the top.
+*heis* is Norwegian for **elevator**. Elevator, `/Elevate`, elevated
+privileges — that is the whole joke, and the whole tool: press one button, go
+straight to the top.
 
 ## Before you press
 
-The lift only runs in the building it is installed in. You need a Windows
+The elevator only runs in the building it is installed in. You need a Windows
 machine — a Cloud PC (Windows 365 / AVD) is what this was built on — with
 **Admin By Request** already installed, because ABR's dialogs are what it
-clicks. Without ABR there is no lift to call, just an empty shaft.
+clicks. Without ABR there is no elevator to call, just an empty shaft.
 
 It automates a privilege-elevation prompt. Read [SECURITY.md](SECURITY.md)
 before you run it. If you do not know what this does, it is not for you.
@@ -40,7 +41,7 @@ before you run it. If you do not know what this does, it is not for you.
 
 Starts Admin By Request with `/Elevate`, clicks through the dialogs for you —
 `Yes`, then `OK` — and verifies the countdown actually started before it
-reports back. Do not guess, check. Then you know the lift really arrived.
+reports back. Do not guess, check. Then you know the elevator really arrived.
 
 | | |
 | --- | --- |
@@ -53,7 +54,7 @@ reports back. Do not guess, check. Then you know the lift really arrived.
 
 Every button has its floor:
 
-| button | the lift says |
+| button | the elevator says |
 | --- | --- |
 | *(none)* | `heisen er oppe - 05:59:59 igjen` |
 | `-Status` | `heisen går allerede - 05:12:03 igjen` |
@@ -80,8 +81,8 @@ $h = 'https://heis.d0.si/Heis.ps1'
 ## Installing
 
 `Install.ps1` asks where to put `Heis.ps1`, whether to report status on logon,
-and whether to take the lift automatically over SSH — then fetches the file,
-applies the answers and verifies the whole path.
+and whether to take the elevator automatically over SSH — then fetches the
+file, applies the answers and verifies the whole path.
 
 ```powershell
 irm heis.d0.si/install.ps1 | iex
@@ -102,7 +103,7 @@ installer to change your mind:
 ## The logon block
 
 `-AddToProfile` writes a marked block into `$PROFILE` that reports live status,
-and takes the lift when there is none — but **only over SSH**, keyed on
+and takes the elevator when there is none — but **only over SSH**, keyed on
 `$env:SSH_CONNECTION`, which the SSH server sets and nothing else does. At the
 desktop you can press the button yourself; there is no reason to file an
 elevation request for every local console.
@@ -118,7 +119,7 @@ That is a real trade; [SECURITY.md](SECURITY.md) spells it out.
 
 An SSH shell lands in **session 0** — the basement, no screen. Nothing it does
 reaches the desktop, because window handles do not cross a session boundary. So
-the lift takes a detour:
+the elevator takes a detour:
 
 ```
   ▲  interactive session   relay fires, clicks the dialogs with window
@@ -153,7 +154,7 @@ the pipeline and `$LASTEXITCODE` is 1.
 
 | | |
 | --- | --- |
-| `Heis.ps1` | the lift. One file, no dependencies. |
+| `Heis.ps1` | the elevator. One file, no dependencies. |
 | `Install.ps1` | first-run script: asks, fetches, wires up, verifies. |
 | `SECURITY.md` | what it does, what it does not, and what it changes. |
 | `AGENTS.md` | why it is built this way. Read before editing. |

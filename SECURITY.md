@@ -14,7 +14,7 @@ The whole thing is one PowerShell file. Read it first.
 It starts `AdminByRequest.exe /Elevate` and clicks the buttons you would have
 clicked — `Yes`, then `OK` — by posting `BM_CLICK` to those specific controls.
 Then it checks that the countdown window appeared, so it can tell you whether
-the lift actually arrived rather than assuming it did.
+the elevator actually arrived rather than assuming it did.
 
 That is the entire mechanism. There is no cleverness underneath it.
 
@@ -37,7 +37,7 @@ That is the entire mechanism. There is no cleverness underneath it.
 ## What it does change
 
 **Auto-elevation on logon is a real change to your posture.** With
-`-AutoElevateOnLogin $true`, every SSH login takes the lift. You will hold
+`-AutoElevateOnLogin $true`, every SSH login takes the elevator. You will hold
 local administrator far more of the time than if you elevated deliberately,
 which is exactly the thing just-in-time elevation exists to avoid. That may be
 a fine trade for you. It is a trade.
