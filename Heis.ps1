@@ -391,7 +391,19 @@ or bake the URL in, by hosting a copy whose $SourceUrl default points at itself.
     return $path
 }
 
+# The relay task's action, or $null when there is no task. Used to decide
+# whether it needs registering at all.
+function Get-RelayTaskArguments {
+    $out = schtasks /query /tn $script:TaskName /xml 2>$null
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $text = ($out | Out-String)
+    if ($text -match '(?s)<Arguments>(.*?)</Arguments>') { return $Matches[1] }
+    return ''
+}
+
 function Register-RelayTask {
+    param([Parameter(Mandatory)][string] $Self)
+
     # Windows PowerShell by absolute path, not $PSHOME: under pwsh 7 that would
     # point at pwsh.exe, which a downloaded copy of this script cannot assume is
     # installed. System32\WindowsPowerShell is always present.
@@ -403,7 +415,7 @@ function Register-RelayTask {
     # Scheduler answers "No mapping between account names and security IDs".
     # The SID is the same however the session was established.
     $sid  = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    $self = Resolve-SelfPath
+    $self = $Self
 
     $xml = @"
 <?xml version="1.0" encoding="UTF-16"?>
@@ -441,7 +453,25 @@ function Register-RelayTask {
     [IO.File]::WriteAllText($path, $xml, [Text.Encoding]::Unicode)
     try {
         $out = schtasks /create /tn $script:TaskName /xml $path /f 2>&1
-        if ($LASTEXITCODE -ne 0) { throw "could not register the relay task: $out" }
+        if ($LASTEXITCODE -ne 0) {
+            $msg = "could not register the relay task: $out"
+            if (Get-RelayTaskArguments) {
+                # A task registered from an elevated context carries a security
+                # descriptor this account cannot write. That is only a problem
+                # when the task needs replacing - normally the existing one is
+                # reused untouched.
+                $msg += @"
+
+A task called '$($script:TaskName)' already exists and points somewhere else,
+and this account cannot modify it - it was registered by a more privileged
+context, such as a shell running while Admin By Request had granted admin.
+
+Delete it from an elevated session and run this again:
+    schtasks /delete /tn "$($script:TaskName)" /f
+"@
+            }
+            throw $msg
+        }
     } finally {
         Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
     }
@@ -458,9 +488,17 @@ function Invoke-ViaSession {
     @{ Id = $id; Action = $Action; WaitSec = $Seconds; Exe = $Exe } |
         ConvertTo-Json | Set-Content -LiteralPath $reqFile -Encoding UTF8
 
-    # Registered every run rather than only when missing: it is cheap, and it
-    # repairs a task left pointing at an older copy of this script.
-    Register-RelayTask
+    # Register only when there is no task, or the one there points somewhere
+    # else. Re-registering unconditionally looks harmless and is not: a task
+    # first created while Admin By Request had granted admin gets a security
+    # descriptor this account cannot overwrite, so every later run from an
+    # unelevated shell died on "Access is denied" while the existing task was
+    # perfectly good and would have worked untouched.
+    $self = Resolve-SelfPath
+    $have = Get-RelayTaskArguments
+    if ($null -eq $have -or -not $have.Contains($self)) {
+        Register-RelayTask -Self $self
+    }
 
     $out = schtasks /run /tn $script:TaskName 2>&1
     if ($LASTEXITCODE -ne 0) {
@@ -482,9 +520,20 @@ function Invoke-ViaSession {
 
 # ----------------------------------------------------------------- main ---
 if ($Uninstall) {
-    schtasks /delete /tn $script:TaskName /f 2>&1 | Out-Null
+    $out = schtasks /delete /tn $script:TaskName /f 2>&1
+    $taskGone = ($LASTEXITCODE -eq 0) -or -not (Get-RelayTaskArguments)
     Remove-Item -LiteralPath $script:StateDir -Recurse -Force -ErrorAction SilentlyContinue
-    Write-Host 'heis avinstallert' -ForegroundColor Green
+
+    if ($taskGone) {
+        Write-Host 'heis avinstallert' -ForegroundColor Green
+    } else {
+        # Do not claim success for work that did not happen. A task registered
+        # from an elevated context cannot be deleted from an unelevated one.
+        Write-Host 'heis-filene er fjernet' -ForegroundColor Yellow
+        Write-Warning ("the scheduled task could not be removed ($out). " +
+            "Delete it from an elevated session:  schtasks /delete /tn `"$($script:TaskName)`" /f")
+        exit 1
+    }
     return
 }
 
