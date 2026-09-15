@@ -33,6 +33,17 @@ $h = 'https://raw.githubusercontent.com/damsleth/heis/main/Heis.ps1'
 Either way it writes a copy to `%LOCALAPPDATA%\Heis`, because the relay task
 needs a file on disk to point at.
 
+Output goes to the pipeline, so it drops into a `$PROFILE` cleanly:
+
+```powershell
+$s = .\Heis.ps1 -Status               # the message, as a string
+$h = .\Heis.ps1 -Status -PassThru     # Message, Active, Remaining, InGroup
+if (-not $h.Active) { .\Heis.ps1 }
+```
+
+Branch on `.Active` rather than the message text. On failure nothing reaches
+the pipeline and `$LASTEXITCODE` is 1.
+
 To keep it somewhere you can find again, `Install.ps1` puts it beside your
 PowerShell profile:
 

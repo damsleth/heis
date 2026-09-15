@@ -31,10 +31,19 @@
     Either way the script writes a copy of itself to LOCALAPPDATA\Heis, because
     the relay task has to point at a file on disk.
 
+    Output goes to the pipeline, so it can be captured:
+
+        $s = .\Heis.ps1 -Status                    # the message, as a string
+        $h = .\Heis.ps1 -Status -PassThru          # Message, Active, Remaining, InGroup
+
+    Prefer branching on -PassThru's .Active over matching the message text.
+    On failure nothing is written to the pipeline and $LASTEXITCODE is 1.
+
 .EXAMPLE
     .\Heis.ps1              # elevate, unless already elevated
     .\Heis.ps1 -Status      # report and exit
     .\Heis.ps1 -Finish      # end the running session
+    .\Heis.ps1 -PassThru    # emit the state object, not just the message
     .\Heis.ps1 -Uninstall   # remove the relay task and the copy
 #>
 [CmdletBinding()]
@@ -51,6 +60,10 @@ param(
     # work at all, since that form leaves a script no way to know its own text.
     # Point it at your own host if you serve a copy from somewhere else.
     [string] $SourceUrl = 'https://raw.githubusercontent.com/damsleth/heis/main/Heis.ps1',
+
+    # Emit the full state object instead of just the message, so a caller can
+    # branch on .Active or .Remaining rather than matching on Norwegian text.
+    [switch] $PassThru,
 
     # Set when this instance is the one running inside the interactive session.
     # Not for humans.
@@ -372,12 +385,25 @@ function Format-Status {
     return 'ikke elevert'
 }
 
+# Every action returns the same shape: the human message, plus the state it
+# left things in. The message goes to the pipeline so `$s = .\Heis.ps1 -Status`
+# works; -PassThru gives the object so a profile can branch on .Active instead
+# of matching Norwegian text that may get reworded.
 function Invoke-Action {
     param([string] $Action, [int] $Seconds)
-    switch ($Action) {
+
+    $message = switch ($Action) {
         'Status'  { Format-Status }
         'Finish'  { Invoke-Finish  -Seconds $Seconds }
         default   { Invoke-Elevate -Seconds $Seconds }
+    }
+
+    $state = Get-AbrState
+    [pscustomobject]@{
+        Message   = $message
+        Active    = $state.Active
+        Remaining = $state.Remaining
+        InGroup   = $state.InGroup
     }
 }
 
@@ -585,7 +611,7 @@ over RDP once and this works from here afterwards.
             $r = Get-Content -LiteralPath $resFile -Raw | ConvertFrom-Json
             Remove-Item -LiteralPath $resFile -Force -ErrorAction SilentlyContinue
             if (-not $r.Ok) { throw $r.Message }
-            return $r.Message
+            return $r.Data
         }
         Start-Sleep -Milliseconds 400
     }
@@ -638,8 +664,7 @@ if ($InSession) {
 
     try {
         $Exe = $req.Exe
-        $msg = Invoke-Action -Action $req.Action -Seconds ([int]$req.WaitSec)
-        $result = @{ Ok = $true; Message = $msg }
+        $result = @{ Ok = $true; Data = (Invoke-Action -Action $req.Action -Seconds ([int]$req.WaitSec)) }
     } catch {
         $result = @{ Ok = $false; Message = $_.Exception.Message }
     }
@@ -654,15 +679,25 @@ $mySession = (Get-Process -Id $PID).SessionId
 
 try {
     if ($mySession -eq 0) {
-        $msg = Invoke-ViaSession -Action $action -Seconds $WaitSec
+        $result = Invoke-ViaSession -Action $action -Seconds $WaitSec
     } else {
-        $msg = Invoke-Action -Action $action -Seconds $WaitSec
+        $result = Invoke-Action -Action $action -Seconds $WaitSec
     }
 } catch {
-    Write-Host $_.Exception.Message -ForegroundColor Red
+    # WriteErrorLine rather than Write-Error: one clean red line, and no
+    # ErrorRecord to terminate a caller that runs with $ErrorActionPreference
+    # 'Stop' - which matters when the caller is a $PROFILE that still has to
+    # finish loading.
+    #
+    # The trade-off is that this writes to the host, not to a redirectable
+    # stream, so `2>&1` does not capture it. $LASTEXITCODE is the programmatic
+    # signal: non-zero means nothing was done, and nothing is written to the
+    # pipeline in that case.
+    $Host.UI.WriteErrorLine($_.Exception.Message)
     exit 1
 }
 
-$colour = 'Green'
-if ($msg -like 'ikke elevert*' -or $msg -like 'ingen heis*') { $colour = 'Yellow' }
-Write-Host $msg -ForegroundColor $colour
+# The message on the pipeline, so `$s = .\Heis.ps1 -Status` captures it and an
+# interactive run still prints it. Write-Host would do neither: it cannot be
+# captured, and emitting both would print twice.
+if ($PassThru) { $result } else { $result.Message }
