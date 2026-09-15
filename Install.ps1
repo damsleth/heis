@@ -46,7 +46,12 @@ param(
 
     # Also add a block to $PROFILE that takes the heis automatically when you
     # log in over SSH. Re-running replaces the block rather than adding another.
-    [switch] $AddToProfile
+    [switch] $AddToProfile,
+
+    # The value written into the block's $HEIS_AUTO_ELEVATE flag. $false still
+    # reports status on logon, it just does not elevate. Editing the flag in the
+    # profile afterwards works too; this only picks the initial value.
+    [bool] $AutoElevateOnLogin = $true
 )
 
 $ErrorActionPreference = 'Stop'
@@ -114,16 +119,55 @@ if ($AddToProfile) {
     # Single quotes in a Windows path are legal and would end the string early.
     $quoted = $target.Replace("'", "''")
 
-    # $env:SSH_CONNECTION is set by the SSH server for its own sessions and by
-    # nothing else, so it is the cleanest way to tell a remote logon from
-    # sitting at the desktop. The Test-Path guard keeps a moved or deleted copy
-    # from throwing on every logon.
-    $block = @"
-$begin
+    # A single-quoted here-string with placeholders, so none of the block's own
+    # $variables are interpolated while it is being written out. Escaping a
+    # dozen of them by hand is the kind of thing that works until one is missed.
+    $template = @'
+__BEGIN__
 # Added by Install.ps1 -AddToProfile. Delete this block to stop it.
-if (`$env:SSH_CONNECTION -and (Test-Path -LiteralPath '$quoted')) { & '$quoted' }
-$end
-"@
+
+# Take the heis automatically on remote logon. $false reports status only.
+$HEIS_AUTO_ELEVATE = __AUTO__
+$HEIS_PATH         = '__PATH__'
+
+# Live admin check, on purpose not [WindowsPrincipal]::IsInRole: a process
+# token carries the group membership it was born with, so a shell started
+# before elevation answers "not admin" for the rest of its life however
+# elevated the account becomes. A function rather than a variable for the same
+# reason - a variable set at logon is a snapshot that quietly goes stale.
+function Test-IsAdmin {
+    ((net localgroup Administrators 2>$null) -join "`n") -match [regex]::Escape($env:USERNAME)
+}
+
+# Status comes from Heis.ps1 itself, which reads the countdown window on the
+# desktop rather than inferring anything from this process.
+function Show-HeisStatus {
+    if (-not (Test-Path -LiteralPath $HEIS_PATH)) { return $null }
+
+    $h = & $HEIS_PATH -Status -PassThru
+    if     ($h.Active)  { Write-Host "ABR aktiv - $($h.Remaining) igjen"  -ForegroundColor Green }
+    elseif ($h.InGroup) { Write-Host 'admin, men ingen ABR-nedtelling'    -ForegroundColor DarkYellow }
+    else                { Write-Host 'ikke elevert'                       -ForegroundColor Yellow }
+    return $h
+}
+
+$heis = Show-HeisStatus
+
+# SSH_CONNECTION is set by the SSH server for its own sessions and by nothing
+# else - a better test than session id, which also catches services. At the
+# desktop you can take the heis by hand.
+if ($HEIS_AUTO_ELEVATE -and $env:SSH_CONNECTION -and $heis -and -not $heis.Active) {
+    & $HEIS_PATH | Out-Null
+    $heis = Show-HeisStatus      # report where that left things
+}
+__END__
+'@
+
+    $auto  = if ($AutoElevateOnLogin) { '$true' } else { '$false' }
+    $block = $template.Replace('__BEGIN__', $begin).
+                       Replace('__END__',   $end).
+                       Replace('__AUTO__',  $auto).
+                       Replace('__PATH__',  $quoted)
 
     $dir = Split-Path -Parent $PROFILE
     if ($dir -and -not (Test-Path -LiteralPath $dir)) {
@@ -149,6 +193,10 @@ $end
     # there was none is an unexplained diff in someone else's file.
     [IO.File]::WriteAllText($PROFILE, $updated, [Text.UTF8Encoding]::new($hadBom))
 
-    Write-Host "Lagt til i profilen - heisen tas automatisk ved SSH-innlogging" -ForegroundColor Green
+    if ($AutoElevateOnLogin) {
+        Write-Host 'Lagt til i profilen - heisen tas automatisk ved SSH-innlogging' -ForegroundColor Green
+    } else {
+        Write-Host 'Lagt til i profilen - status vises ved innlogging, men heisen tas ikke' -ForegroundColor Green
+    }
     Write-Host "  $PROFILE" -ForegroundColor DarkGray
 }
