@@ -75,7 +75,11 @@ $script:AA = [char]0xE5   # a-ring
 $script:OE = [char]0xF8   # o-slash
 
 $ErrorActionPreference = 'Stop'
-$script:TaskName = 'Heis - Admin By Request'
+
+# TaskName is settled at run time by Resolve-RelayTask, which falls back to a
+# per-user name when the canonical one exists but cannot be written.
+$script:TaskNameDefault = 'Heis - Admin By Request'
+$script:TaskName        = $script:TaskNameDefault
 $script:StateDir = Join-Path $env:LOCALAPPDATA 'Heis'
 
 # Sentinel proving a recovered blob really is this script. Do not remove.
@@ -119,7 +123,6 @@ public static class HeisWin32
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowTextW(IntPtr h, StringBuilder s, int n);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassNameW(IntPtr h, StringBuilder s, int n);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr h);
-    [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr h);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr PostMessageW(IntPtr h, uint msg, IntPtr w, IntPtr l);
 
@@ -158,8 +161,6 @@ public static class HeisWin32
     // BM_CLICK. Asks the button to activate itself: no coordinates, no
     // hit-testing, and nothing that depends on the window being visible.
     public static void Click(long hwnd) { PostMessageW(new IntPtr(hwnd), 0x00F5, IntPtr.Zero, IntPtr.Zero); }
-
-    public static bool Alive(long hwnd) { return IsWindow(new IntPtr(hwnd)); }
 }
 '@
 }
@@ -203,49 +204,35 @@ function Find-Window {
     Get-Windows | Where-Object { $_.Title -eq $Title } | Select-Object -First 1
 }
 
-function Wait-ForWindow {
-    param([Parameter(Mandatory)][string] $Title, [int] $Seconds = 30)
-    $deadline = (Get-Date).AddSeconds($Seconds)
-    do {
-        $w = Find-Window -Title $Title
-        if ($w) { return $w }
-        Start-Sleep -Milliseconds 300
-    } while ((Get-Date) -lt $deadline)
-    throw "timed out after ${Seconds}s waiting for window '$Title'"
-}
-
-function Wait-ForWindowGone {
-    param([Parameter(Mandatory)][string] $Title, [int] $Seconds = 30)
-    $deadline = (Get-Date).AddSeconds($Seconds)
-    do {
-        if (-not (Find-Window -Title $Title)) { return }
-        Start-Sleep -Milliseconds 300
-    } while ((Get-Date) -lt $deadline)
-    throw "window '$Title' still open after ${Seconds}s"
-}
-
 # Press a button by the caption a person reads off the screen.
 #
 # Not by index: control ordering is an artefact of creation order and is not
 # guessable. On ABR's confirm dialog the buttons are No first and Yes second,
 # and on its countdown window the Finish button sits after four labels.
+# Takes a list of captions and tries them in order, so a localised or reworded
+# dialog still gets answered instead of stopping the run. Returns whether it
+# pressed anything; callers decide whether that is a problem, because in the
+# dialog loop below it usually is not.
 function Press-Button {
-    param([Parameter(Mandatory)][int64] $Hwnd, [Parameter(Mandatory)][string] $Caption)
+    param([Parameter(Mandatory)][int64] $Hwnd, [Parameter(Mandatory)][string[]] $Captions)
 
-    $want = $Caption.Replace('&', '')
-    $ctls = @(Get-Controls -Hwnd $Hwnd)
+    # Buttons only. Searching every control would let a substring match find
+    # "OK" inside a label and click something that is not a button - the class
+    # covers both plain Win32 `Button` and WinForms `...BUTTON...`.
+    $buttons = @(Get-Controls -Hwnd $Hwnd | Where-Object { $_.Class -match 'BUTTON' -and $_.Text })
 
-    $hit = $ctls | Where-Object { $_.Text.Replace('&', '') -eq $want } | Select-Object -First 1
-    if (-not $hit) {
-        $hit = $ctls | Where-Object { $_.Text.Replace('&', '') -like "*$want*" } | Select-Object -First 1
+    foreach ($caption in $Captions) {
+        $want = $caption.Replace('&', '')
+        $hit  = $buttons | Where-Object { $_.Text.Replace('&', '') -eq $want } | Select-Object -First 1
+        if (-not $hit) {
+            $hit = $buttons | Where-Object { $_.Text.Replace('&', '') -like "*$want*" } | Select-Object -First 1
+        }
+        if ($hit) {
+            [HeisWin32]::Click($hit.Hwnd)
+            return $true
+        }
     }
-    if (-not $hit) {
-        $seen = ($ctls | Where-Object { $_.Text } | ForEach-Object { "'$($_.Text)'" }) -join ', '
-        if (-not $seen) { $seen = '(none - the app draws its own controls)' }
-        throw "no button captioned '$Caption'. Found: $seen"
-    }
-
-    [HeisWin32]::Click($hit.Hwnd)
+    return $false
 }
 
 # ------------------------------------------------------------------ abr ---
@@ -257,10 +244,18 @@ function Press-Button {
 # elevation reports "not admin" for its whole life however elevated the account
 # becomes. Local group membership is queried alongside it because that one is
 # live rather than a snapshot.
-function Get-AbrState {
-    $w = Get-Windows | Where-Object {
+# The countdown window on its own. Kept separate from Get-AbrState because the
+# dialog loop polls several times a second, and Get-AbrState shells out to
+# `net localgroup` - which at that rate means a few processes a second for the
+# length of the wait, to answer a question the loop never asks.
+function Get-AbrCountdown {
+    Get-Windows | Where-Object {
         $_.Exe -eq 'AdminByRequest' -and $_.Title -match '^\d{1,2}:\d{2}:\d{2}$'
     } | Select-Object -First 1
+}
+
+function Get-AbrState {
+    $w = Get-AbrCountdown
 
     $inGroup = $false
     try { $inGroup = ((net localgroup Administrators 2>$null) -join "`n") -match [regex]::Escape($env:USERNAME) } catch { }
@@ -273,30 +268,57 @@ function Get-AbrState {
     }
 }
 
+# Dialogs Admin By Request may raise, and what to press on each. Several
+# captions per dialog because the wording and the UI language are not
+# guaranteed to be the ones seen here.
+$script:AbrDialogs = @(
+    @{ Title = 'Admin By Request Confirm'; Buttons = @('Yes', 'Ja', 'Continue', 'OK') }
+    @{ Title = 'Admin By Request';         Buttons = @('OK', 'Yes', 'Ja', 'Close', 'Lukk') }
+)
+
+# Answer whatever dialogs turn up until $Done says we are there.
+#
+# Driving the outcome rather than replaying one exact sequence, because the
+# sequence is not reliable: the second dialog does not always appear, the two
+# flows share a dialog title, and a run that had already succeeded used to sit
+# waiting for a window that was never coming and then call itself a failure.
+# Anything unrecognised is simply left alone.
+function Invoke-DialogLoop {
+    param([Parameter(Mandatory)][scriptblock] $Done, [int] $Seconds)
+
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    $pressed  = @{}
+
+    while ((Get-Date) -lt $deadline) {
+        if (& $Done) { return $true }
+
+        foreach ($dialog in $script:AbrDialogs) {
+            $w = Find-Window -Title $dialog.Title
+            if (-not $w) { continue }
+
+            # Once per window. Pressing again while the app is still handling
+            # the first click can land on whatever dialog replaces this one.
+            if ($pressed.ContainsKey($w.Hwnd)) { continue }
+            if (Press-Button -Hwnd $w.Hwnd -Captions $dialog.Buttons) { $pressed[$w.Hwnd] = $true }
+        }
+
+        Start-Sleep -Milliseconds 300
+    }
+    return (& $Done)
+}
+
 function Invoke-Elevate {
     param([int] $Seconds)
 
     $abr = Get-AbrState
     if ($abr.Active) { return "heisen g$($script:AA)r allerede - $($abr.Remaining) igjen" }
 
-    if (-not (Test-Path -LiteralPath $Exe)) { throw "not found: $Exe" }
-    Start-Process -FilePath $Exe -ArgumentList '/Elevate' | Out-Null
+    Start-Process -FilePath (Resolve-AbrExe) -ArgumentList '/Elevate' | Out-Null
 
-    $confirm = Wait-ForWindow -Title 'Admin By Request Confirm' -Seconds $Seconds
-    Press-Button -Hwnd $confirm.Hwnd -Caption 'Yes'
-
-    $done = Wait-ForWindow -Title 'Admin By Request' -Seconds $Seconds
-    Press-Button -Hwnd $done.Hwnd -Caption 'OK'
-
-    # Verify rather than trust: confirm the countdown actually appeared.
-    $deadline = (Get-Date).AddSeconds(20)
-    do {
-        Start-Sleep -Seconds 1
-        $after = Get-AbrState
-    } while (-not $after.Active -and (Get-Date) -lt $deadline)
-
-    if (-not $after.Active) { throw 'clicked through, but no countdown appeared' }
-    return "heisen er oppe - $($after.Remaining) igjen"
+    if (-not (Invoke-DialogLoop -Seconds $Seconds -Done { [bool](Get-AbrCountdown) })) {
+        throw 'started Admin By Request but no countdown appeared'
+    }
+    return "heisen er oppe - $((Get-AbrCountdown).Title) igjen"
 }
 
 function Invoke-Finish {
@@ -307,21 +329,40 @@ function Invoke-Finish {
 
     # Addressed by hwnd: the countdown window's title is a clock and changes
     # every second, so any title match races the tick.
-    Press-Button -Hwnd $abr.Hwnd -Caption 'Finish'
+    Press-Button -Hwnd $abr.Hwnd -Captions @('Finish', 'Avslutt', 'Stop') | Out-Null
 
-    # Finish raises the same "Admin By Request Confirm" dialog the elevation
-    # flow uses, asking whether you are done. Its buttons are No then Yes.
-    $confirm = Wait-ForWindow -Title 'Admin By Request Confirm' -Seconds $Seconds
-    Press-Button -Hwnd $confirm.Hwnd -Caption 'Yes'
-
-    $deadline = (Get-Date).AddSeconds(20)
-    do {
-        Start-Sleep -Seconds 1
-        $after = Get-AbrState
-    } while ($after.Active -and (Get-Date) -lt $deadline)
-
-    if ($after.Active) { throw "Finish pressed but the session is still running ($($after.Remaining) left)" }
+    # Finish raises the same Confirm dialog the elevation flow uses, so the
+    # loop handles it without needing to know which flow it is in.
+    if (-not (Invoke-DialogLoop -Seconds $Seconds -Done { -not (Get-AbrCountdown) })) {
+        throw "pressed Finish but the session is still running ($((Get-AbrCountdown).Title) left)"
+    }
     return 'heisen er nede'
+}
+
+# Find AdminByRequest.exe rather than insisting on one path. Installers move
+# between Program Files and Program Files (x86) between versions, and where it
+# is already running the running image is the most reliable answer there is.
+function Resolve-AbrExe {
+    if ($Exe -and (Test-Path -LiteralPath $Exe)) { return $Exe }
+
+    $running = Get-Process -Name 'AdminByRequest' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($running) {
+        try { if ($running.Path) { return $running.Path } } catch { }   # denied on a more privileged process
+    }
+
+    $roots = @(${env:ProgramFiles(x86)}, $env:ProgramFiles) | Where-Object { $_ }
+    foreach ($root in $roots) {
+        $candidate = Join-Path $root 'FastTrack Software\Admin By Request\AdminByRequest.exe'
+        if (Test-Path -LiteralPath $candidate) { return $candidate }
+    }
+
+    # Last resort, and depth-limited: a full scan of Program Files is slow
+    # enough to look like a hang.
+    $found = Get-ChildItem -Path $roots -Filter 'AdminByRequest.exe' -Recurse -Depth 4 `
+                           -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($found) { return $found.FullName }
+
+    throw 'cannot find AdminByRequest.exe - pass its path with -Exe'
 }
 
 function Format-Status {
@@ -452,35 +493,72 @@ function Register-RelayTask {
     $path = Join-Path $env:TEMP "heis-task-$PID.xml"
     [IO.File]::WriteAllText($path, $xml, [Text.Encoding]::Unicode)
     try {
-        $out = schtasks /create /tn $script:TaskName /xml $path /f 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            $msg = "could not register the relay task: $out"
-            if (Get-RelayTaskArguments) {
-                # A task registered from an elevated context carries a security
-                # descriptor this account cannot write. That is only a problem
-                # when the task needs replacing - normally the existing one is
-                # reused untouched.
-                $msg += @"
-
-A task called '$($script:TaskName)' already exists and points somewhere else,
-and this account cannot modify it - it was registered by a more privileged
-context, such as a shell running while Admin By Request had granted admin.
-
-Delete it from an elevated session and run this again:
-    schtasks /delete /tn "$($script:TaskName)" /f
-"@
-            }
-            throw $msg
-        }
+        schtasks /create /tn $script:TaskName /xml $path /f 2>&1 | Out-Null
+        return ($LASTEXITCODE -eq 0)
     } finally {
         Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
     }
 }
 
+# Settle on a task name that works, and leave $script:TaskName pointing at it.
+#
+# The canonical name can be unusable through no fault of this run: a task
+# registered while Admin By Request had granted admin carries a security
+# descriptor an unelevated account cannot overwrite. Rather than dead-end on
+# that and demand an elevated shell, fall back to a name of our own. A second
+# task is a much smaller cost than a tool that stops working.
+function Resolve-RelayTask {
+    param([Parameter(Mandatory)][string] $Self)
+
+    $names = @($script:TaskNameDefault, "$($script:TaskNameDefault) ($env:USERNAME)")
+
+    foreach ($name in $names) {
+        $script:TaskName = $name
+
+        # Already pointing at the right script: reuse it untouched. Rewriting a
+        # task that is already correct is what made the canonical one
+        # unusable from SSH in the first place.
+        $have = Get-RelayTaskArguments
+        if ($null -ne $have -and $have.Contains($Self)) { return }
+
+        if (Register-RelayTask -Self $Self) { return }
+    }
+
+    $script:TaskName = $script:TaskNameDefault
+    throw @"
+could not register a relay task under any name.
+
+Creating scheduled tasks may be blocked by policy on this machine. Check with:
+    schtasks /create /tn HeisTest /tr cmd.exe /sc once /st 00:00 /f
+"@
+}
+
 function Invoke-ViaSession {
     param([string] $Action, [int] $Seconds)
 
+    # `schtasks /run` reports success even when the task cannot actually start
+    # because nobody is logged on, so the only way to notice used to be the
+    # reply never arriving - 75 seconds later. An explorer.exe outside session
+    # 0 is a reliable, cheap sign that a desktop session exists to relay into.
+    $interactive = @(Get-Process -Name explorer -ErrorAction SilentlyContinue |
+                     Where-Object { $_.SessionId -ne 0 })
+    if (-not $interactive) {
+        throw @'
+nobody is logged in, so there is no desktop session to drive.
+
+The session may be disconnected - that is fine - but it has to exist. Connect
+over RDP once and this works from here afterwards.
+'@
+    }
+
     New-Item -ItemType Directory -Path $script:StateDir -Force | Out-Null
+
+    # Replies from runs that timed out or died never get collected. Clearing
+    # them keeps the directory from growing forever.
+    Get-ChildItem -LiteralPath $script:StateDir -Filter 'result-*.json' -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -lt (Get-Date).AddMinutes(-10) } |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+
     $id      = [guid]::NewGuid().ToString('N')
     $reqFile = Join-Path $script:StateDir 'request.json'
     $resFile = Join-Path $script:StateDir "result-$id.json"
@@ -488,21 +566,17 @@ function Invoke-ViaSession {
     @{ Id = $id; Action = $Action; WaitSec = $Seconds; Exe = $Exe } |
         ConvertTo-Json | Set-Content -LiteralPath $reqFile -Encoding UTF8
 
-    # Register only when there is no task, or the one there points somewhere
-    # else. Re-registering unconditionally looks harmless and is not: a task
-    # first created while Admin By Request had granted admin gets a security
-    # descriptor this account cannot overwrite, so every later run from an
-    # unelevated shell died on "Access is denied" while the existing task was
-    # perfectly good and would have worked untouched.
-    $self = Resolve-SelfPath
-    $have = Get-RelayTaskArguments
-    if ($null -eq $have -or -not $have.Contains($self)) {
-        Register-RelayTask -Self $self
-    }
+    Resolve-RelayTask -Self (Resolve-SelfPath)
 
     $out = schtasks /run /tn $script:TaskName 2>&1
     if ($LASTEXITCODE -ne 0) {
-        throw "could not start the relay task: $out`nIs anyone logged in? The task runs only when a session exists."
+        # A disabled task refuses to run. Enabling one this account owns is
+        # within its rights, so try that before giving up.
+        schtasks /change /tn $script:TaskName /enable 2>&1 | Out-Null
+        $out = schtasks /run /tn $script:TaskName 2>&1
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "could not start the relay task: $out"
     }
 
     $deadline = (Get-Date).AddSeconds($Seconds + 45)
@@ -520,8 +594,16 @@ function Invoke-ViaSession {
 
 # ----------------------------------------------------------------- main ---
 if ($Uninstall) {
-    $out = schtasks /delete /tn $script:TaskName /f 2>&1
-    $taskGone = ($LASTEXITCODE -eq 0) -or -not (Get-RelayTaskArguments)
+    # Both names, since a fallback task may have been registered alongside the
+    # canonical one.
+    $stuck = @()
+    foreach ($name in @($script:TaskNameDefault, "$($script:TaskNameDefault) ($env:USERNAME)")) {
+        $script:TaskName = $name
+        $out = schtasks /delete /tn $name /f 2>&1
+        if ($LASTEXITCODE -ne 0 -and (Get-RelayTaskArguments)) { $stuck += $name }
+    }
+    $script:TaskName = $script:TaskNameDefault
+    $taskGone = -not $stuck
     Remove-Item -LiteralPath $script:StateDir -Recurse -Force -ErrorAction SilentlyContinue
 
     if ($taskGone) {
@@ -530,8 +612,8 @@ if ($Uninstall) {
         # Do not claim success for work that did not happen. A task registered
         # from an elevated context cannot be deleted from an unelevated one.
         Write-Host 'heis-filene er fjernet' -ForegroundColor Yellow
-        Write-Warning ("the scheduled task could not be removed ($out). " +
-            "Delete it from an elevated session:  schtasks /delete /tn `"$($script:TaskName)`" /f")
+        Write-Warning ("could not remove: $($stuck -join ', '). " +
+            "Delete from an elevated session:  schtasks /delete /tn `"$($stuck[0])`" /f")
         exit 1
     }
     return
@@ -544,6 +626,13 @@ if ($Finish) { $action = 'Finish' }
 if ($InSession) {
     # Running inside the interactive session, launched by the relay task.
     $reqFile = Join-Path $script:StateDir 'request.json'
+    if (-not (Test-Path -LiteralPath $reqFile)) { return }
+
+    # Only act on a request somebody is still waiting for. The task can be
+    # started by hand, or by a leftover trigger, and replaying the last request
+    # then would elevate - or end a session - with nobody having asked.
+    if ((Get-Item -LiteralPath $reqFile).LastWriteTime -lt (Get-Date).AddMinutes(-3)) { return }
+
     $req = Get-Content -LiteralPath $reqFile -Raw | ConvertFrom-Json
     $resFile = Join-Path $script:StateDir "result-$($req.Id).json"
 

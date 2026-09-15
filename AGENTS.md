@@ -168,6 +168,35 @@ It also hardcodes Windows PowerShell's absolute path rather than `$PSHOME`,
 which under pwsh 7 points at `pwsh.exe` — not something a downloaded copy can
 assume is installed.
 
+### It recovers instead of refusing
+
+The rule for this script is that a plain `Heis.ps1` with no arguments should
+just work, so it repairs what it can rather than reporting it:
+
+- **Drive the outcome, not a script of steps.** `Invoke-DialogLoop` answers
+  whatever known dialog is on screen until the countdown appears. The previous
+  version replayed one exact sequence and would sit waiting for a second dialog
+  that does not always come — then call a run that had already succeeded a
+  failure.
+- **Several captions per button.** `Yes`/`Ja`/`Continue`, so a localised or
+  reworded dialog still gets answered.
+- **Find the exe, do not assert it.** Running image first, then both Program
+  Files roots, then a depth-limited search.
+- **Fall back to a second task name.** The canonical task can be unwritable
+  through no fault of the run, and a spare task is cheaper than a dead end.
+- **Fail fast on what cannot be repaired.** No interactive session is checked
+  up front — an `explorer.exe` outside session 0 — because `schtasks /run`
+  reports success regardless and the old code only noticed 75s later.
+
+Two things to keep in mind when editing it:
+
+- `Get-AbrState` shells out to `net localgroup`. Never call it from a poll
+  loop; use `Get-AbrCountdown`, which only looks at windows. The loop runs
+  several times a second and was briefly spawning that many processes.
+- The in-session side ignores a `request.json` older than three minutes.
+  Without that, anything that starts the task — a person, a stale trigger —
+  replays the last request and silently elevates.
+
 ## Style
 
 Comments explain **why**, especially where the code looks like it could be
