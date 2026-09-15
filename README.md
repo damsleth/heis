@@ -44,12 +44,14 @@ if (-not $h.Active) { .\Heis.ps1 }
 Branch on `.Active` rather than the message text. On failure nothing reaches
 the pipeline and `$LASTEXITCODE` is 1.
 
-To keep it somewhere you can find again, `Install.ps1` puts it beside your
-PowerShell profile:
+To get the file itself rather than run it from memory, `Install.ps1` drops it
+in the current directory, ready to move wherever you want it:
 
 ```powershell
 irm https://raw.githubusercontent.com/damsleth/heis/main/Install.ps1 | iex
 ```
+
+`-Destination` puts it somewhere else; `-Force` overwrites an existing copy.
 
 Or download it and run it:
 
@@ -193,7 +195,7 @@ desktops are never guessed between; that refuses.
 | `Run-Macro.ps1` | launch an app and click through its dialogs |
 | `Install-AhkAgentTask.ps1` | start the agent on interactive logon |
 | `Heis.ps1` | **the deliverable** — elevation in one file, no dependencies |
-| `Install.ps1` | copies `Heis.ps1` next to your PowerShell profile |
+| `Install.ps1` | drops `Heis.ps1` into the current directory |
 | `heis_ahk.ps1` | the same thing built on the agent, kept as a worked example |
 | `HEADLESS-SETUP.md` | running unattended, and the limits |
 | `AGENTS.md` | notes for whoever works on this next |

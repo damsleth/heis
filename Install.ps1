@@ -3,9 +3,8 @@
     Installer heisen - put Heis.ps1 next to your PowerShell profile.
 
 .DESCRIPTION
-    Copies Heis.ps1 into the directory your $PROFILE lives in, so it is
-    somewhere stable and easy to find rather than wherever you happened to
-    download it.
+    Copies Heis.ps1 into the current directory, where it is easy to find, move
+    or copy somewhere permanent. Use -Destination to put it elsewhere.
 
     Run it from a clone, or straight off the web - if there is no Heis.ps1
     beside this script it is fetched from SourceUrl:
@@ -26,7 +25,7 @@ param(
     # Where to fetch Heis.ps1 when there is no copy beside this script.
     [string] $SourceUrl = 'https://raw.githubusercontent.com/damsleth/heis/main/Heis.ps1',
 
-    # Install somewhere other than the profile directory.
+    # Install somewhere other than the current directory.
     [string] $Destination
 )
 
@@ -39,12 +38,18 @@ $ErrorActionPreference = 'Stop'
 $AA = [char]0xE5   # a-ring
 $OE = [char]0xF8   # o-slash
 
-# $PROFILE is the profile FILE; its directory is what we want. It differs
-# between hosts - Documents\PowerShell under pwsh, Documents\WindowsPowerShell
-# under Windows PowerShell 5.1 - so the copy lands beside whichever host ran
-# this. That is the intent: the profile you use is the one it sits next to.
-if (-not $Destination) { $Destination = Split-Path -Parent $PROFILE }
-if (-not $Destination) { throw 'cannot work out where your PowerShell profile lives' }
+# The current directory, so the file lands where you are and can be moved
+# wherever you want it.
+#
+# Taken from the provider path rather than $PWD directly: a PowerShell location
+# can sit on a drive that is not a filesystem at all - a registry or
+# certificate drive - and there is nowhere to write a file there. Falling back
+# to the home directory beats failing on something nobody was thinking about.
+if (-not $Destination) {
+    if ($PWD.Provider.Name -eq 'FileSystem') { $Destination = $PWD.ProviderPath }
+    else                                     { $Destination = $HOME }
+}
+if (-not $Destination) { throw 'cannot work out where to install' }
 
 $target = Join-Path $Destination 'Heis.ps1'
 
