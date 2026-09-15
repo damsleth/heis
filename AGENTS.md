@@ -148,6 +148,13 @@ Works with no input desktop at all: `run`, `windows`, `win-pos`,
   launch a second AutoHotkey script for a throwaway dialog instead.
 - RDP resolution and DPI change under a running agent as the client window is
   resized or moved between displays. Never cache geometry.
+- **Documents is redirected into OneDrive, so `$PROFILE` is a cloud
+  placeholder.** `Get-Item` reports `Length 0` and a stale `LastWriteTime` for
+  a dehydrated file — the real profile read 0 bytes while holding 2257 bytes of
+  content, which looks exactly like having just destroyed someone's profile.
+  `[IO.File]::ReadAllBytes`/`ReadAllText` hydrate it and return the truth, which
+  is what the profile code already uses. Never branch on `.Length` for a file
+  under OneDrive.
 
 ## Heis.ps1
 
