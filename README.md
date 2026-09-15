@@ -53,6 +53,17 @@ irm https://raw.githubusercontent.com/damsleth/heis/main/Install.ps1 | iex
 
 `-Destination` puts it somewhere else; `-Force` overwrites an existing copy.
 
+`-AddToProfile` also writes a block into `$PROFILE` so the heis is taken
+automatically when you log in — but **only over SSH**, keyed on
+`$env:SSH_CONNECTION`, which the SSH server sets and nothing else does. At the
+desktop you can take it by hand, and there is no reason to fire an elevation
+request for every console opened on the machine itself.
+
+The block is delimited by markers, so re-running replaces it rather than adding
+another, and the path stays current. Delete the block to stop it. It edits the
+profile of the host it runs under — `pwsh` and Windows PowerShell have separate
+ones — so run it under the shell you actually log in with.
+
 Or download it and run it:
 
 ```powershell

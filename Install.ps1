@@ -13,9 +13,25 @@
 
     Existing installs are left alone. Pass -Force to overwrite one.
 
+    -AddToProfile also writes a block into $PROFILE so the heis is taken
+    automatically when you log in - but only over SSH. Locally you are at the
+    desktop and can take it by hand; there is no reason to fire an elevation
+    request for every console opened on the machine itself.
+
+    It edits the profile of the host it runs under: pwsh and Windows PowerShell
+    have separate ones, so run it under the shell you actually log in with. The
+    block is delimited by markers and re-running replaces it, so the path stays
+    current and the profile does not collect copies. Delete the block to stop
+    it.
+
+    Each remote shell then costs about a second while it checks, and rather
+    more the first time, when it actually elevates.
+
 .EXAMPLE
     .\Install.ps1
     .\Install.ps1 -Force
+    .\Install.ps1 -AddToProfile
+    .\Install.ps1 -Destination C:\tools -AddToProfile
 #>
 [CmdletBinding()]
 param(
@@ -26,7 +42,11 @@ param(
     [string] $SourceUrl = 'https://raw.githubusercontent.com/damsleth/heis/main/Heis.ps1',
 
     # Install somewhere other than the current directory.
-    [string] $Destination
+    [string] $Destination,
+
+    # Also add a block to $PROFILE that takes the heis automatically when you
+    # log in over SSH. Re-running replaces the block rather than adding another.
+    [switch] $AddToProfile
 )
 
 $ErrorActionPreference = 'Stop'
@@ -86,3 +106,49 @@ if ((Test-Path -LiteralPath $target) -and -not $Force) {
 }
 
 Write-Host ("Heisen er installert - kj{0}r `"{1}`" for {2} ta heisen, eller `"{1}`" -? for hjelp" -f $OE, $target, $AA) -ForegroundColor Green
+
+if ($AddToProfile) {
+    $begin = '# >>> heis >>>'
+    $end   = '# <<< heis <<<'
+
+    # Single quotes in a Windows path are legal and would end the string early.
+    $quoted = $target.Replace("'", "''")
+
+    # $env:SSH_CONNECTION is set by the SSH server for its own sessions and by
+    # nothing else, so it is the cleanest way to tell a remote logon from
+    # sitting at the desktop. The Test-Path guard keeps a moved or deleted copy
+    # from throwing on every logon.
+    $block = @"
+$begin
+# Added by Install.ps1 -AddToProfile. Delete this block to stop it.
+if (`$env:SSH_CONNECTION -and (Test-Path -LiteralPath '$quoted')) { & '$quoted' }
+$end
+"@
+
+    $dir = Split-Path -Parent $PROFILE
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+
+    $existing = ''
+    $hadBom   = $false
+    if (Test-Path -LiteralPath $PROFILE) {
+        $bytes    = [IO.File]::ReadAllBytes($PROFILE)
+        $hadBom   = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+        $existing = [IO.File]::ReadAllText($PROFILE)
+    }
+
+    # Replace any previous block instead of appending a second one.
+    $pattern = [regex]::Escape($begin) + '.*?' + [regex]::Escape($end)
+    $cleaned = ([regex]::Replace($existing, $pattern, '', 'Singleline')).TrimEnd()
+
+    $updated = if ($cleaned) { "$cleaned`r`n`r`n$block`r`n" } else { "$block`r`n" }
+
+    # Preserve whatever BOM the profile already had: removing one breaks a
+    # Windows PowerShell profile containing non-ASCII, and adding one where
+    # there was none is an unexplained diff in someone else's file.
+    [IO.File]::WriteAllText($PROFILE, $updated, [Text.UTF8Encoding]::new($hadBom))
+
+    Write-Host "Lagt til i profilen - heisen tas automatisk ved SSH-innlogging" -ForegroundColor Green
+    Write-Host "  $PROFILE" -ForegroundColor DarkGray
+}
