@@ -145,6 +145,15 @@ type an `å` back in.
 - **Raw URLs are case-sensitive, and `core.ignorecase` hides renames.** Git
   recorded `heis.ps1` while the disk said `Heis.ps1`, which would have 404'd
   the self-fetch in a way that looks nothing like a case problem.
+- **Never let a second thing call `/Elevate`.** A caller that raises the Confirm
+  dialog and does not answer it leaves ABR with a request pending. ABR then
+  ignores every later request in silence: no window, and the tray menu's
+  "Request administrator access" does nothing. Only a reboot clears it. A
+  predecessor of this script polled every 30 seconds and did exactly that,
+  including through disconnected sessions, and the symptom was `started Admin
+  By Request but no countdown appeared` from a Heis that was working correctly.
+  Before blaming this code, check what else is calling ABR:
+  `Get-ScheduledTask | Where-Object { $_.TaskPath -eq '\' }`.
 - **GitHub's raw CDN caches for about five minutes.** A push then a fetch will
   serve the old file, including to a cache-buster. Twice this looked like a fix
   not working.
