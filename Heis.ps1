@@ -602,11 +602,33 @@ function Invoke-ViaSession {
     # because nobody is logged on, so the only way to notice used to be the
     # reply never arriving - 75 seconds later. An explorer.exe outside session
     # 0 is a reliable, cheap sign that a desktop session exists to relay into.
-    $interactive = @(Get-Process -Name explorer -ErrorAction SilentlyContinue |
-                     Where-Object { $_.SessionId -ne 0 })
+    #
+    # It has to be THIS account's session. The relay task runs as this user
+    # with an interactive token, so another account's desktop is no use to it
+    # - and an explorer.exe check cannot tell whose it is without admin. A
+    # second local account logging in over SSH saw the owner's explorer, fired
+    # a task that could never start, and sat out the full 75 seconds.
+    # `query user` names each session's owner and works unprivileged; the
+    # explorer check stays as the fallback for SKUs that do not ship it.
+    $interactive = $null
+    # Judged by the header, not the exit code: run from session 0, `query user`
+    # lists the sessions correctly and still exits 1.
+    $sessions = @(query user 2>$null)
+    if ($sessions.Count -gt 0 -and $sessions[0] -match 'USERNAME') {
+        # USERNAME is truncated to 20 characters, and the caller's own session
+        # is prefixed with '>'.
+        $me = $env:USERNAME
+        if ($me.Length -gt 20) { $me = $me.Substring(0, 20) }
+        $interactive = @($sessions | Select-Object -Skip 1 | Where-Object {
+            ($_ -replace '^[\s>]+', '' -split '\s+')[0] -eq $me
+        })
+    } else {
+        $interactive = @(Get-Process -Name explorer -ErrorAction SilentlyContinue |
+                         Where-Object { $_.SessionId -ne 0 })
+    }
     if (-not $interactive) {
         throw @'
-nobody is logged in, so there is no desktop session to drive.
+this account has no desktop session, so there is nothing to drive.
 
 The session may be disconnected - that is fine - but it has to exist. Connect
 over RDP once and this works from here afterwards.
