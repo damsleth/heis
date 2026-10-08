@@ -154,6 +154,56 @@ type an `å` back in.
   By Request but no countdown appeared` from a Heis that was working correctly.
   Before blaming this code, check what else is calling ABR:
   `Get-ScheduledTask | Where-Object { $_.TaskPath -eq '\' }`.
+- **`exit` under `iex` or a script block closes the user's shell.** Verified:
+  `irm … | iex` and `& ([scriptblock]::Create(…))` both take the whole host
+  down on `exit 1`, SSH session included. So a failed install used to close the
+  terminal it was reporting into. Every `exit` is guarded by `$PSCommandPath`,
+  which is set only for a file run, even when iex runs inside another script.
+  Install.ps1 also runs its body in `& { }`, because under iex its top level
+  is the caller's scope and `$ErrorActionPreference = 'Stop'` stayed behind.
+- **`irm Heis.ps1 | iex` re-runs itself in a child scope.** Under iex the text
+  runs in the caller's scope, so `$ErrorActionPreference = 'Stop'` would stay
+  behind in their shell. The guard at the top of Heis.ps1 spots iex (no
+  `$PSCommandPath`, and its own text is not in `$MyInvocation`). It then
+  fetches the script once more and invokes that as a script block.
+- **Native stderr is fatal in Windows PowerShell 5.1 under `Stop`.** A
+  redirected stderr line (`2>$null`, `2>&1`) becomes an ErrorRecord and throws.
+  So `schtasks /query` on a task that does not exist yet, which is every first
+  run, ended the script instead of answering "missing". pwsh 7.2+ does not do
+  this, which is how it hid: the SSH side ran pwsh. But `heis.cmd` and a stock
+  install run 5.1. Every native call goes through `Invoke-Native`.
+- **Profiles come in several encodings.** UTF-8 with a BOM, UTF-16, or BOM-less
+  ANSI that Windows PowerShell reads as the ANSI code page.
+  `Set-ProfileBlock` writes the file back in whatever encoding it found.
+  Writing ANSI Norwegian letters back as UTF-8 corrupts them for 5.1.
+- **`PositionalBinding = $false` is load-bearing.** With it on, any stray word
+  binds to `-Exe`, `Resolve-AbrExe` heals past the bad path, and `heis statsu`
+  elevates. Once `heis` is on the PATH, typos are routine.
+- **Exit 0 explicitly on success.** Without it, `$LASTEXITCODE` is whatever
+  native command ran last, and `query user` exits 1 from session 0 even when
+  it works. The installer and `heis.cmd` both read the code.
+- **PowerShell prefers `Heis.ps1` over `heis.cmd` in the same folder.** That is
+  wanted, because it gives objects instead of text. But it means typing `heis`
+  in PowerShell is subject to execution policy. `heis.cmd` passes
+  `-ExecutionPolicy Bypass` and serves everything else, including an SSH login
+  that lands in cmd.exe.
+- **Edit the user PATH in the registry, not with
+  `[Environment]::SetEnvironmentVariable`.** That API reads the value expanded
+  and writes REG_SZ, which hardcodes the `%USERPROFILE%\…\WindowsApps` entry
+  Windows ships. Read with `DoNotExpandEnvironmentNames` and keep the value kind.
+- **`WM_SETTINGCHANGE` from session 0 never reaches the desktop.** After an
+  install over SSH, new SSH sessions see the PATH, but desktop terminals do not
+  until the user signs out and in. Say so; do not pretend it is instant.
+- **Judge execution policy without the Process scope.** `powershell
+  -ExecutionPolicy Bypass -Command "irm … | iex"` reports Bypass, but the
+  shells the user opens later will not get it. The installer and `-Doctor`
+  both skip the Process scope. Windows PowerShell and pwsh keep separate
+  policies and separate profiles.
+- **The default install folder is `%LOCALAPPDATA%\Programs\Heis`, not `$PWD`.**
+  `$PWD` was chosen so the file landed somewhere visible. But over SSH that is
+  the home folder, and putting the home folder on the PATH makes every file in
+  it a command. The PATH now handles discoverability, so the file can live in a
+  folder of its own. `-Uninstall` removes that folder whole, and only that one.
 - **GitHub's raw CDN caches for about five minutes.** A push then a fetch will
   serve the old file, including to a cache-buster. Twice this looked like a fix
   not working.
@@ -180,8 +230,19 @@ There is no test suite; drive it.
 
 ```powershell
 .\Heis.ps1 -Status          # cheapest round-trip through the relay
+.\Heis.ps1 -Doctor          # every check, plus the relay round-trip
 .\Heis.ps1 -Verify          # non-destructive if a session is already running
 ```
+
+Off Windows, pwsh can still catch most of what breaks the one-liner. Parse
+both files and reject 7-only syntax by walking the AST for
+`TernaryExpressionAst`, `PipelineChainAst` and the null-coalescing operators.
+Run each file through `| iex` and through a script block, and check that the
+calling shell survives a failure. The profile-block helpers can be lifted out
+by AST and round-tripped against a temp file.
+
+`README.md` names exact error messages in its troubleshooting table. When you
+change a `throw`, change the table with it.
 
 Prompts are skipped when stdin is redirected, so `Install.ps1` is safe to run
 from automation — it takes the defaults. Use `-Yes` to be explicit.
