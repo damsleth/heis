@@ -97,7 +97,8 @@ param(
     [string] $SourceUrl = 'https://heis.d0.si/Heis.ps1',
 
     # Write a block into $PROFILE that reports status on logon, and takes the
-    # heis when there is none. Re-running replaces the block. These live here
+    # heis when there is none. Re-running updates the block's path and elevate
+    # setting in place, keeping any hand edits. These live here
     # rather than in Install.ps1 because they are settings, not install steps:
     # changing your mind later should not mean re-running an installer.
     [switch] $AddToProfile,
@@ -800,15 +801,6 @@ __BEGIN__
 $HEIS_AUTO_ELEVATE = __AUTO__
 $HEIS_PATH         = '__PATH__'
 
-# Live admin check, on purpose not [WindowsPrincipal]::IsInRole: a process
-# token carries the group membership it was born with, so a shell started
-# before elevation answers "not admin" for the rest of its life however
-# elevated the account becomes. A function rather than a variable for the same
-# reason - a variable set at logon is a snapshot that quietly goes stale.
-function Test-IsAdmin {
-    ((net localgroup Administrators 2>$null) -join "`n") -match [regex]::Escape($env:USERNAME)
-}
-
 # Status comes from Heis.ps1 itself, which reads the countdown window on the
 # desktop rather than inferring anything from this process.
 function Show-HeisStatus {
@@ -889,10 +881,13 @@ function Read-ProfileBlock {
 
     $target = $null
     $auto   = $true
-    if ($m.Value -match '(?m)^\$HEIS_PATH\s*=\s*''((?:[^'']|'''')*)''') { $target = $Matches[1].Replace("''", "'") }
-    if ($m.Value -match '(?m)^\$HEIS_AUTO_ELEVATE\s*=\s*\$(\w+)')      { $auto   = $Matches[1] -eq 'true' }
+    # Indented is fine: a hand-edited block may have moved them into an if.
+    if ($m.Value -match '(?m)^\s*\$HEIS_PATH\s*=\s*''((?:[^'']|'''')*)''') { $target = $Matches[1].Replace("''", "'") }
+    if ($m.Value -match '(?m)^\s*\$HEIS_AUTO_ELEVATE\s*=\s*\$(\w+)')      { $auto   = $Matches[1] -eq 'true' }
     # Guarded: stays quiet in non-interactive shells, by the template's test
     # or a hand-made one. A block that is not prints into scp's stream.
+    # ponytail: a word match, so a comment naming it counts too; parse the
+    # block's AST if a false "guarded" ever matters.
     $guarded = $m.Value -match 'SSH_ORIGINAL_COMMAND|GetCommandLineArgs|Quiet'
     [pscustomobject]@{ Path = $Path; Target = $target; AutoElevate = $auto; Guarded = $guarded; Text = $m.Value }
 }
@@ -917,11 +912,19 @@ function Update-ProfileBlock {
     # a $ that a replacement string would read as a group reference.
     $quoted = $Target.Replace("'", "''")
     $auto   = if ($AutoElevate) { '$true' } else { '$false' }
-    $block  = [regex]::Replace($b.Text, '(?m)^(\$HEIS_PATH\s*=\s*)''(?:[^'']|'''')*''',
+    $block  = [regex]::Replace($b.Text, '(?m)^(\s*\$HEIS_PATH\s*=\s*)''(?:[^'']|'''')*''',
                                { param($m) $m.Groups[1].Value + "'" + $quoted + "'" })
-    $block  = [regex]::Replace($block, '(?m)^(\$HEIS_AUTO_ELEVATE\s*=\s*)\$\w+',
-                               { param($m) $m.Groups[1].Value + $auto })
-    if ($block -ceq $b.Text) { return $false }
+    if ($block -match '(?m)^\s*\$HEIS_AUTO_ELEVATE\s*=\s*\$\w+') {
+        $block = [regex]::Replace($block, '(?m)^(\s*\$HEIS_AUTO_ELEVATE\s*=\s*)\$\w+',
+                                  { param($m) $m.Groups[1].Value + $auto })
+    } else {
+        # No elevate line to edit, so asking for status-only would silently do
+        # nothing. Put one in, just above the path line.
+        $block = [regex]::Replace($block, '(?m)^(\s*)(\$HEIS_PATH\s*=)',
+                                  { param($m) $m.Groups[1].Value + '$HEIS_AUTO_ELEVATE = ' + $auto + "`r`n" + $m.Groups[1].Value + $m.Groups[2].Value })
+    }
+    # Always through Set-ProfileBlock, even when this block is unchanged: it
+    # also drops any second copy, which could otherwise go on elevating.
     return (Set-ProfileBlock -Path $Path -Block $block)
 }
 
@@ -943,13 +946,23 @@ function Set-ProfileBlock {
     $cleaned = $rx.Replace($existing, '').TrimEnd()
     $first   = $rx.Match($existing)
 
+    # Markers that do not pair up mean the regex would run from one block's
+    # start to a LATER block's end, deleting whatever the user wrote between.
+    # Touch nothing; a person has to look.
+    $begins = [regex]::Matches($existing, [regex]::Escape($script:BlockBegin)).Count
+    $ends   = [regex]::Matches($existing, [regex]::Escape($script:BlockEnd)).Count
+    $nested = @($rx.Matches($existing) | Where-Object { $_.Value.IndexOf($script:BlockBegin, 1) -ge 0 }).Count
+    if ($begins -ne $ends -or $nested) {
+        throw "the heis markers in $Path do not pair up ($begins begin, $ends end) - fix that file by hand, then run this again"
+    }
+
     if ($Block -and $first.Success) {
         # Replaced where it stands. The profile around it may set things the
         # block relies on - a quiet flag, say - so moving it to the end can
         # change what it does. Any further copies are dropped.
-        if ($existing.Substring($first.Index, $first.Length) -ceq $Block) { return $false }
         $updated = $existing.Substring(0, $first.Index) + $Block +
                    $rx.Replace($existing.Substring($first.Index + $first.Length), '')
+        if ($updated -ceq $existing) { return $false }
     } elseif ($Block) {
         $updated = if ($cleaned) { "$cleaned`r`n`r`n$Block`r`n" } else { "$Block`r`n" }
     } else {
@@ -1238,32 +1251,40 @@ function Invoke-Doctor {
     }
     foreach ($b in $blocks) {
         $mode = if ($b.AutoElevate) { 'elevates over SSH' } else { 'status only' }
-        if ($b.Target -and (Test-Path -LiteralPath $b.Target)) {
-            if ($installed -and $b.Target -ne $self) {
-                # An install from before heis had a folder of its own, or a
-                # clone. Repointed at the installed copy; only the path line
-                # changes, so its settings and any hand edits stay.
+        # Only THE installed copy repoints anything. A stray copy run from
+        # Downloads would otherwise bind the profile to Downloads.
+        try {
+            if ($b.Target -and (Test-Path -LiteralPath $b.Target)) {
+                if ($installed -and $b.Target -ne $self) {
+                    # An install from before heis had a folder of its own, or a
+                    # clone. Repointed at the installed copy; only the path line
+                    # changes, so its settings and any hand edits stay.
+                    $null = Update-ProfileBlock -Path $b.Path -Target $self -AutoElevate $b.AutoElevate
+                    New-Check 'logon block' fixed ("$($b.Path) ran another copy, $($b.Target).`n" +
+                        "Now $self ($mode). If the other one was an old install, it can be deleted.")
+                } else {
+                    New-Check 'logon block' ok "$($b.Path) ($mode)"
+                }
+            } elseif ($installed) {
                 $null = Update-ProfileBlock -Path $b.Path -Target $self -AutoElevate $b.AutoElevate
-                New-Check 'logon block' fixed ("$($b.Path) ran another copy, $($b.Target).`n" +
-                    "Now $self ($mode). If the other one was an old install, it can be deleted.")
+                New-Check 'logon block' fixed "$($b.Path) pointed at a missing file - now $self"
             } else {
-                New-Check 'logon block' ok "$($b.Path) ($mode)"
+                New-Check 'logon block' warn "$($b.Path) points at $($b.Target), which is gone. Re-run the installer."
             }
-        } elseif ($self) {
-            $null = Update-ProfileBlock -Path $b.Path -Target $self -AutoElevate $b.AutoElevate
-            New-Check 'logon block' fixed "$($b.Path) pointed at a missing file - now $self"
-        } else {
-            New-Check 'logon block' warn "$($b.Path) points at $($b.Target), which is gone. Re-run the installer."
+        } catch {
+            New-Check 'logon block' fail $_.Exception.Message
         }
 
         # Blocks written before the template had its quiet guard print in every
         # shell, `ssh host <cmd>` and scp included - and scp then fails with
         # "Received message too long". Not rewritten here, because the block
-        # may be hand-edited; the refresh is one command away.
+        # may be hand-edited; the refresh is one command away, in the edition
+        # whose profile it is - each edits only its own $PROFILE.
         if (-not $b.Guarded) {
-            $flag = if ($b.AutoElevate) { '' } else { ' -AutoElevateOnLogin $false' }
+            $flag  = if ($b.AutoElevate) { '' } else { ' -AutoElevateOnLogin $false' }
+            $shell = if ($b.Path -match '\\WindowsPowerShell\\') { 'Windows PowerShell (powershell.exe)' } else { 'pwsh' }
             New-Check 'logon block' warn ("$($b.Path) also prints in non-interactive shells, which breaks scp`n" +
-                "and sftp. Refresh it from the current template:`n" +
+                "and sftp. Refresh it from the current template, in $($shell):`n" +
                 "  heis -AddToProfile:`$false; heis -AddToProfile$flag")
         }
     }
@@ -1350,10 +1371,14 @@ if ($Uninstall) {
     # Both names, since a fallback task may have been registered alongside the
     # canonical one. A task registered from an elevated context cannot be
     # deleted from an unelevated one.
+    # Listed before the delete, as well as read after it: a task created while
+    # elevated may be one this account cannot read either, and a failed read
+    # must not pass for "already gone".
+    $listed = (Invoke-Native { schtasks /query /fo csv /nh }) -join "`n"
     foreach ($name in @($script:TaskNameDefault, "$($script:TaskNameDefault) ($env:USERNAME)")) {
         $script:TaskName = $name
         $null = Invoke-Native { schtasks /delete /tn $name /f }
-        if ($LASTEXITCODE -ne 0 -and $null -ne (Get-RelayTaskArguments)) {
+        if ($LASTEXITCODE -ne 0 -and ($listed.Contains("`"\$name`"") -or $null -ne (Get-RelayTaskArguments))) {
             $left += "scheduled task '$name' - from an elevated shell:  schtasks /delete /tn `"$name`" /f"
         }
     }

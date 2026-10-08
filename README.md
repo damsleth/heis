@@ -192,9 +192,11 @@ your **user** PATH. No admin is needed, and other entries are untouched,
 including `%VARIABLES%`. In PowerShell, `heis` runs `Heis.ps1` directly, so
 `-PassThru` objects work. Every other shell goes through `heis.cmd`.
 
-The current terminal sees the change at once, and new ones do too. One
-exception: if you installed over SSH, the desktop's Explorer is not told. A
-terminal opened from the desktop finds `heis` after you sign out and in again.
+The PowerShell that ran the installer sees the change at once, and new
+terminals do too. A cmd or Git Bash that started that PowerShell does not; open
+a new one. One more exception: if you installed over SSH, the desktop's
+Explorer is not told. A terminal opened from the desktop finds `heis` after you
+sign out and in again.
 
 ## The logon block
 
