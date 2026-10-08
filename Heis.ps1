@@ -103,8 +103,11 @@ param(
     [switch] $AddToProfile,
 
     # With -AddToProfile: whether the logon block elevates over SSH ($true) or
-    # only reports status ($false).
-    [bool]   $AutoElevateOnLogin = $true,
+    # only reports status ($false). A string rather than a [bool] on purpose:
+    # heis.cmd passes arguments through `powershell -File`, which hands over
+    # the text "$false" - and a [bool] parameter refuses text. So $false,
+    # false, 0, no and nei all mean no, from PowerShell and cmd alike.
+    [string] $AutoElevateOnLogin = 'true',
 
     # Put `heis` on the PATH: writes heis.cmd beside this script, so any shell
     # can run it, and adds this folder to the user PATH. No admin needed.
@@ -863,7 +866,11 @@ function Read-ProfileBlock {
 
     if (-not (Test-Path -LiteralPath $Path)) { return $null }
     $pattern = [regex]::Escape($script:BlockBegin) + '.*?' + [regex]::Escape($script:BlockEnd)
-    $m = [regex]::Match([IO.File]::ReadAllText($Path), $pattern, 'Singleline')
+    # Decoded the way Set-ProfileBlock writes it. A plain UTF-8 read of an ANSI
+    # profile turns "Bjoern" with an o-slash into a replacement character,
+    # and the block's perfectly good target then looks missing.
+    $text = [IO.File]::ReadAllText($Path, (Get-TextEncoding -Bytes ([IO.File]::ReadAllBytes($Path))))
+    $m = [regex]::Match($text, $pattern, 'Singleline')
     if (-not $m.Success) { return $null }
 
     $target = $null
@@ -904,6 +911,14 @@ function Set-ProfileBlock {
 
     # Written back in the encoding it came in, BOM and all - see
     # Get-TextEncoding. This file belongs to the user, not to heis.
+    #
+    # One exception. BOM-less UTF-8 - a new file, or a pure-ASCII one - is
+    # read by Windows PowerShell 5.1 as ANSI, so the moment the block brings
+    # in a non-ASCII path (C:\Users\Bjoern with an o-slash) it needs a BOM, or
+    # 5.1 reads a different path than the one written. pwsh reads both alike.
+    if ($encoding -is [Text.UTF8Encoding] -and $encoding.GetPreamble().Length -eq 0 -and $Block -match '[^\x00-\x7F]') {
+        $encoding = [Text.UTF8Encoding]::new($true)
+    }
     [IO.File]::WriteAllText($Path, $updated, $encoding)
     return $true
 }
@@ -1053,9 +1068,19 @@ function Get-PersistentPolicy {
             return [pscustomobject]@{ Policy = $p; Locked = ($scope -like '*Policy') }
         }
     }
-    # Nothing set: the edition's built-in default.
-    $default = if ($PSVersionTable.PSEdition -eq 'Core') { 'RemoteSigned' } else { 'Restricted' }
-    return [pscustomobject]@{ Policy = $default; Locked = $false }
+    return [pscustomobject]@{ Policy = (Get-DefaultPolicy); Locked = $false }
+}
+
+# What applies when no scope sets anything: Restricted on a Windows client,
+# RemoteSigned on a server - for pwsh as much as Windows PowerShell. pwsh only
+# looks more permissive because its installer usually writes RemoteSigned into
+# its own config, which then shows up as LocalMachine. Read from the registry,
+# because Get-CimInstance fails for a non-admin over SSH.
+function Get-DefaultPolicy {
+    $type = $null
+    try { $type = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ProductOptions' -ErrorAction Stop).ProductType } catch { }
+    if ($type -and $type -ne 'WinNT') { return 'RemoteSigned' }
+    return 'Restricted'
 }
 
 # Check everything heis depends on, repair what belongs to heis, and say what
@@ -1222,7 +1247,8 @@ heis - Admin By Request elevation, one command. No admin rights needed.
   heis -Doctor         check the setup, repair what can be repaired
   heis -AddToPath      run heis from any terminal (user PATH)
   heis -AddToProfile   status on logon, and elevate on SSH logon
-        -AutoElevateOnLogin $false     ... status only
+        -AutoElevateOnLogin $false     ... status only (from cmd: false)
+  heis -AddToPath:$false, -AddToProfile:$false   take either out again
   heis -Uninstall      remove everything heis has set up
   heis -PassThru       with any of the above: an object, not text
 
@@ -1268,21 +1294,34 @@ if ($Uninstall) {
     $script:TaskName = $script:TaskNameDefault
 
     # Every PATH entry and shim heis wrote, wherever it was installed from.
+    # Each removal catches its own failure - a read-only profile or a locked
+    # registry key goes on the list below instead of ending the uninstall with
+    # the rest still in place.
     $gone = @()
-    foreach ($dir in @(Get-HeisPathDirs)) {
-        $null = Edit-UserPath -Dir $dir -Remove
+    $dirs = @()
+    try { $dirs = @(Get-HeisPathDirs) } catch { $left += "user PATH: $($_.Exception.Message)" }
+    foreach ($dir in $dirs) {
         $shim = Join-Path $dir 'heis.cmd'
+        try {
+            $null = Edit-UserPath -Dir $dir -Remove
+            $gone += $dir
+            Write-Host "  PATH: fjernet $dir" -ForegroundColor DarkGray
+        } catch {
+            $left += "PATH entry $dir - $($_.Exception.Message)"
+        }
         Remove-Item -LiteralPath $shim -Force -ErrorAction SilentlyContinue
         if (Test-Path -LiteralPath $shim) { $left += $shim }
-        $gone += $dir
-        Write-Host "  PATH: fjernet $dir" -ForegroundColor DarkGray
     }
     if ($gone) {
         $env:Path = (@($env:Path -split ';' | Where-Object { $_ -and ($gone -notcontains $_.TrimEnd('\')) })) -join ';'
     }
 
     foreach ($p in @(Get-ProfilePaths)) {
-        if (Set-ProfileBlock -Path $p -Block '') { Write-Host "  profil: fjernet blokken i $p" -ForegroundColor DarkGray }
+        try {
+            if (Set-ProfileBlock -Path $p -Block '') { Write-Host "  profil: fjernet blokken i $p" -ForegroundColor DarkGray }
+        } catch {
+            $left += "logon block in $p - $($_.Exception.Message)"
+        }
     }
 
     foreach ($dir in @($script:StateDir, $script:InstallDirDefault)) {
@@ -1312,23 +1351,47 @@ if ($Uninstall) {
 # -AddToPath and -AddToProfile are settings, not actions, so on their own they
 # configure and stop. The installer pairs them with -Doctor and -Verify to
 # prove the thing works once it is wired up.
-if (($AddToPath -or $AddToProfile) -and -not $InSession) {
+#
+# Passed as :$false they take the setting OUT again. The installer always
+# passes both, so answering "no" on an upgrade removes what an earlier install
+# set up - otherwise -Doctor would find the old block or shim and faithfully
+# keep it alive, auto-elevation included, against the answer just given.
+$autoElevate  = $AutoElevateOnLogin -notmatch '^\s*\$?(false|0|no|nei|off)\s*$'
+$setPath      = $PSBoundParameters.ContainsKey('AddToPath')
+$setProfile   = $PSBoundParameters.ContainsKey('AddToProfile')
+$settingsOnly = $setPath -or $setProfile
+
+if ($settingsOnly -and -not $InSession) {
     $self = $PSCommandPath
     if (-not $self -or -not (Test-Path -LiteralPath $self)) { $self = Resolve-SelfPath }
+    $dir = Split-Path -Parent $self
 
-    if ($AddToPath) {
-        $dir = Split-Path -Parent $self
+    if ($setPath -and $AddToPath) {
         if (Add-HeisToPath -Dir $dir) {
             Write-Host 'Lagt til i PATH - heis virker i alle nye terminaler' -ForegroundColor Green
         } else {
             Write-Host 'heis er allerede i PATH' -ForegroundColor Green
         }
         Write-Host "  $dir" -ForegroundColor DarkGray
+    } elseif ($setPath) {
+        # Only a shim heis wrote, and only this copy's folder.
+        $shim = Join-Path $dir 'heis.cmd'
+        if ((Test-Path -LiteralPath $shim) -and ([IO.File]::ReadAllText($shim)).Contains($script:ShimMarker)) {
+            $null = Edit-UserPath -Dir $dir -Remove
+            Remove-Item -LiteralPath $shim -Force
+            $env:Path = (@($env:Path -split ';' | Where-Object { $_ -and $_.TrimEnd('\') -ne $dir.TrimEnd('\') })) -join ';'
+            Write-Host "Fjernet fra PATH: $dir" -ForegroundColor Green
+        }
     }
 
-    if ($AddToProfile) {
-        $null = Set-ProfileBlock -Path $PROFILE -Block (New-ProfileBlock -Target $self -AutoElevate $AutoElevateOnLogin)
-        if ($AutoElevateOnLogin) {
+    if ($setProfile -and -not $AddToProfile) {
+        if (Set-ProfileBlock -Path $PROFILE -Block '') {
+            Write-Host 'Fjernet fra profilen - ingen status eller heis ved innlogging' -ForegroundColor Green
+            Write-Host "  $PROFILE" -ForegroundColor DarkGray
+        }
+    } elseif ($setProfile) {
+        $null = Set-ProfileBlock -Path $PROFILE -Block (New-ProfileBlock -Target $self -AutoElevate $autoElevate)
+        if ($autoElevate) {
             Write-Host 'Lagt til i profilen - heisen tas automatisk ved SSH-innlogging' -ForegroundColor Green
         } else {
             Write-Host 'Lagt til i profilen - status vises ved innlogging, men heisen tas ikke' -ForegroundColor Green
@@ -1358,7 +1421,7 @@ $action = $null
 if     ($Verify) { $action = 'Verify' }
 elseif ($Finish) { $action = 'Finish' }
 elseif ($Status) { $action = 'Status' }
-elseif (-not ($AddToProfile -or $AddToPath)) { $action = 'Elevate' }
+elseif (-not $settingsOnly) { $action = 'Elevate' }   # -AddToPath:$false must not elevate either
 
 if (-not $action) {
     $global:LASTEXITCODE = 0

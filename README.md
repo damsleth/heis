@@ -116,8 +116,8 @@ installer still checks the policy your later shells will get.
 | --- | --- |
 | `-Yes` | take every default, ask nothing |
 | `-Path <dir>` | where `Heis.ps1` goes |
-| `-AddToPath $false` | do not put heis on the PATH |
-| `-AddToProfile $false` | no logon block |
+| `-AddToPath $false` | no PATH entry, and remove one an earlier install added |
+| `-AddToProfile $false` | no logon block, and remove one an earlier install added |
 | `-AutoElevateOnLogin $false` | logon block reports status, but never elevates |
 | `-Verify $false` | skip the test at the end |
 | `-Force` | replace an existing `Heis.ps1` without asking |
@@ -129,7 +129,8 @@ piped input, a scheduled task or CI.
 
 Run the one-liner again. It finds the installed copy, replaces it if it has
 changed, and re-checks everything. Your current answers become the defaults,
-so pressing Enter (or `-Yes`) keeps the setup you have. An install from before
+so pressing Enter (or `-Yes`) keeps the setup you have. Answering no takes the
+PATH entry or logon block out again. An install from before
 heis had a folder of its own moves into `%LOCALAPPDATA%\Programs\Heis`. The
 doctor then points your logon block at the new copy, and the old file can be
 deleted.
@@ -206,10 +207,15 @@ elevation request for every local console.
 ```powershell
 heis -AddToProfile                               # status, and elevate over SSH
 heis -AddToProfile -AutoElevateOnLogin $false    # status only
+heis -AddToProfile:$false                        # remove the block
+heis -AddToPath:$false                           # take heis off the PATH
 ```
 
-Re-running replaces the block rather than adding another. `heis -Uninstall`
-or deleting the block stops it. It edits the profile of the shell it runs
+From cmd, write `false` instead of `$false`:
+`heis -AddToProfile -AutoElevateOnLogin false`.
+
+Re-running replaces the block rather than adding another.
+`heis -AddToProfile:$false`, `heis -Uninstall` or deleting the block stops it. It edits the profile of the shell it runs
 under: `pwsh` and Windows PowerShell have separate profiles. Run it under the
 shell your SSH logins start. `heis -Doctor` checks the SSH server's
 `DefaultShell` and tells you if they differ.
