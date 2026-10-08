@@ -222,8 +222,13 @@ type an `å` back in.
   them. The owner's block had its own quiet guard, an Entra-SID check and a
   token-vs-group colour fix, and an upgrade that replaced it wholesale broke
   scp. `Update-ProfileBlock` edits only the `$HEIS_PATH` and
-  `$HEIS_AUTO_ELEVATE` lines, in place. A fresh template means
+  `$HEIS_AUTO_ELEVATE` lines, in place, indented or not, and adds the elevate
+  line if a hand edit dropped it. A fresh template means
   `-AddToProfile:$false` first.
+- **Refuse to edit a profile whose markers do not pair up.** The block regex
+  is non-greedy from a begin to the next end. With one end marker missing, it
+  runs on to the next block's end and deletes the user's code in between.
+  `Set-ProfileBlock` counts and checks nesting first, and throws instead.
 - **5.1's `-File` cannot pass `:$false` to a switch either.** pwsh 7 can. So
   `heis.cmd -AddToPath:$false` fails on parameter binding. It never elevates,
   but cmd users cannot remove settings that way.
@@ -263,7 +268,7 @@ There is no test suite; drive it.
 
 ```powershell
 .\Heis.ps1 -Status          # cheapest round-trip through the relay
-.\Heis.ps1 -Doctor          # every check, plus the relay round-trip
+.\Heis.ps1 -Doctor          # every check; from SSH, the relay round-trip too
 .\Heis.ps1 -Verify          # non-destructive if a session is already running
 ```
 

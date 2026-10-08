@@ -268,6 +268,8 @@ $heisInstallReady = & {
                "Try again, or fetch it by hand:  irm $SourceUrl -OutFile Heis.ps1")
     }
 
+    # Whether this folder already had heis, for the PATH default in step 3.
+    $hadTarget = Test-Path -LiteralPath $target
     $write = $true
     if (Test-Path -LiteralPath $target) {
         if ([IO.File]::ReadAllText($target) -ceq $source) {
@@ -289,8 +291,11 @@ $heisInstallReady = & {
     # --- 3. wire up ------------------------------------------------------------
     Step 3 'Kobler opp'
 
+    # Yes for a fresh install. An upgrade of a copy that has no shim was
+    # installed without PATH on purpose, so there the default is no.
+    $pathDefault = -not ($hadTarget -and -not $existing)
     $wantPath = if ($null -ne $AddToPath) { [bool]$AddToPath }
-                else { Read-YesNo 'Legge heis i PATH, s{a} du kan skrive heis i alle terminaler?' $true }
+                else { Read-YesNo 'Legge heis i PATH, s{a} du kan skrive heis i alle terminaler?' $pathDefault }
 
     # On an upgrade, the current setup is the default, so Enter (or -Yes) keeps
     # it - rather than quietly switching auto-elevation back on for someone
@@ -342,7 +347,7 @@ $heisInstallReady = & {
     # --- 4. doctor -------------------------------------------------------------
     Step 4 'Sjekker oppsettet'
 
-    $null = & $target -Doctor -PassThru
+    $null = & $target -Doctor
     $healthy = ($LASTEXITCODE -eq 0)
 
     # --- 5. test ---------------------------------------------------------------
@@ -367,7 +372,12 @@ $heisInstallReady = & {
     }
 
     # --- done ------------------------------------------------------------------
-    $run = if ($wantPath) { $heisCmd } else { "& '$target'" }
+    # No PATH and a policy that still refuses scripts: `& 'Heis.ps1'` would
+    # fail the moment the finally below puts the policy back, so name the one
+    # form that works. The logon block cannot load under that policy either.
+    $run = if ($wantPath) { $heisCmd }
+           elseif ($heisCmd -eq 'heis.cmd') { "powershell -NoProfile -ExecutionPolicy Bypass -File '$target'" }
+           else { "& '$target'" }
     Write-Host ''
     if ($healthy) {
         Write-Host (T 'Ferdig - ha det g{o}y med {a} kj{o}re heis!') -ForegroundColor Green
