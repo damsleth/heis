@@ -69,6 +69,11 @@ param(
 # caller's own scope, so whatever it set at the top level - its functions, and
 # $ErrorActionPreference above all - would stay behind in the user's shell
 # after the install. Failure is a throw, caught at the bottom.
+#
+# Execution policy is the exception: its Process scope belongs to the process,
+# not to a PowerShell scope, so a child scope cannot contain it. Remembered
+# here and restored in the finally below.
+$heisProcessPolicy = Get-ExecutionPolicy -Scope Process
 try {
 $heisInstallReady = & {
     $ErrorActionPreference = 'Stop'
@@ -181,7 +186,15 @@ $heisInstallReady = & {
         $policy = $p
         $locked = ([string]$entry.Scope -like '*Policy')
     }
-    if (-not $policy) { $policy = if ($PSVersionTable.PSEdition -eq 'Core') { 'RemoteSigned' } else { 'Restricted' } }
+    if (-not $policy) {
+        # Nothing set: Restricted on a Windows client, RemoteSigned on a server,
+        # whichever edition this is - same rule as Get-DefaultPolicy in Heis.ps1.
+        $policy = 'Restricted'
+        try {
+            $type = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ProductOptions' -ErrorAction Stop).ProductType
+            if ($type -and $type -ne 'WinNT') { $policy = 'RemoteSigned' }
+        } catch { }
+    }
 
     if ($policy -notin 'Restricted', 'AllSigned') {
         Say "ExecutionPolicy: $policy" Green
@@ -203,13 +216,16 @@ $heisInstallReady = & {
         if ($allowed) {
             Say 'ExecutionPolicy: RemoteSigned for din bruker' Green
         } else {
-            # Enough to finish the install. heis.cmd brings its own Bypass, so
-            # heis still works from the PATH - but PowerShell resolves `heis` to
+            # Bypass for this process only, and only until the install is done:
+            # the finally at the bottom puts the Process scope back, so under
+            # `irm | iex` the user's shell is not left bypassing a policy they
+            # just declined to loosen. heis.cmd brings its own Bypass, so heis
+            # still works from the PATH - but PowerShell resolves `heis` to
             # Heis.ps1 first, so there it has to be typed as heis.cmd.
             if ([string](Get-ExecutionPolicy) -in 'Restricted', 'AllSigned') {
                 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
             }
-            Say 'Uendret. I PowerShell m{a} du skrive heis.cmd i stedet for heis.' Yellow
+            Say 'Policyen er uendret. I PowerShell m{a} du skrive heis.cmd i stedet for heis.' Yellow
             $heisCmd = 'heis.cmd'
         }
     }
@@ -313,16 +329,15 @@ $heisInstallReady = & {
     # Heis.ps1 owns these settings, so this just passes the answers through.
     # A hashtable splat, not an array. Array splatting passes POSITIONALLY, so
     # @('-Verify') once bound the string "-Verify" to -Exe and ran the default
-    # action - elevate - against a nonsense path. And never call it with an
-    # empty splat: no switches at all IS the elevate action.
-    $splat = @{}
-    if ($wantPath)    { $splat.AddToPath = $true }
-    if ($wantProfile) { $splat.AddToProfile = $true; $splat.AutoElevateOnLogin = $wantAuto }
-    if ($splat.Count) {
-        & $target @splat
-    } else {
-        Say 'Ingenting {a} koble opp. Kj{o}r Heis.ps1 med full sti.' DarkGray
-    }
+    # action - elevate - against a nonsense path.
+    #
+    # Both settings are always passed, "no" included: -AddToPath:$false and
+    # -AddToProfile:$false take out what an earlier install set up, so an
+    # upgrade answered with "no" really ends up without it. Passing them also
+    # keeps the call a settings call - with no switches at all, Heis.ps1 elevates.
+    $splat = @{ AddToPath = $wantPath; AddToProfile = $wantProfile }
+    if ($wantProfile) { $splat.AutoElevateOnLogin = $wantAuto }
+    & $target @splat
 
     # --- 4. doctor -------------------------------------------------------------
     Step 4 'Sjekker oppsettet'
@@ -387,4 +402,10 @@ if (-not (@($heisInstallReady)[-1])) {
     # Only from a file. Under `irm | iex` there is none, and exit would close the
     # user's whole shell - an SSH session included - on top of the failure.
     if ($PSCommandPath) { exit 1 }
+} finally {
+    # Runs on exit too. Puts back a Process-scope Bypass set for the install,
+    # which under iex would otherwise outlive it in the user's own shell.
+    if ((Get-ExecutionPolicy -Scope Process) -ne $heisProcessPolicy) {
+        try { Set-ExecutionPolicy -Scope Process -ExecutionPolicy $heisProcessPolicy -Force } catch { }
+    }
 }

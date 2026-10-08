@@ -56,7 +56,10 @@ every local script run, not just heis, while still refusing downloaded ones
 that are unsigned. It asks first, defaulting to yes. Under `-Yes`, or with
 nobody to answer, it takes that default. It never changes a policy set by
 Group Policy, never loosens `AllSigned` unless you say so, and `-Uninstall`
-does not undo it, because other scripts may depend on it by then.
+does not undo it, because other scripts may depend on it by then. If you
+decline, the installer bypasses the policy for its own process only, to
+finish, and restores the previous setting before it returns, including in the
+shell you ran `irm | iex` from.
 
 **It adds one folder to your user PATH** and writes `heis.cmd` there. That
 change is user scope only, and `-Uninstall` removes both.

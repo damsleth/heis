@@ -199,6 +199,21 @@ type an `å` back in.
   shells the user opens later will not get it. The installer and `-Doctor`
   both skip the Process scope. Windows PowerShell and pwsh keep separate
   policies and separate profiles.
+- **With no scope set, a Windows client is `Restricted` for pwsh too.** It is
+  a client/server distinction, not Desktop/Core; pwsh just usually ships a
+  LocalMachine `RemoteSigned` in its own config. Read `ProductType` from the
+  registry.
+- **The Process-scope policy outlives a child scope.** It belongs to the
+  process, so under `irm | iex` a Bypass the installer sets would stay in the
+  user's shell. The installer restores it in `finally`.
+- **`powershell -File` cannot pass a `[bool]`.** `heis.cmd` hands over the
+  text `$false`, which a `[bool]` parameter rejects. So `-AutoElevateOnLogin`
+  is a string, parsed for `$false`/`false`/`0`/`no`/`nei`.
+- **A setting passed as `:$false` removes it.** `-AddToPath:$false` and
+  `-AddToProfile:$false` take out what an earlier install set up. The
+  installer always passes both, so answering "no" on an upgrade sticks rather
+  than being revived by `-Doctor`. Decide "settings call or elevate" from
+  `$PSBoundParameters`, never from the switches' values.
 - **The default install folder is `%LOCALAPPDATA%\Programs\Heis`, not `$PWD`.**
   `$PWD` was chosen so the file landed somewhere visible. But over SSH that is
   the home folder, and putting the home folder on the PATH makes every file in
