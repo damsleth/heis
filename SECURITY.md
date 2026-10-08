@@ -7,7 +7,7 @@ twice. It is a small, boring tool with an unglamorous job, but it touches the
 part of a managed machine your security team cares most about, and running
 software you have not read against that is a bad habit whatever the software.
 
-The whole thing is one PowerShell file. Read it first.
+The whole thing is one PowerShell file, plus an installer. Read them first.
 
 ## What it actually does
 
@@ -45,8 +45,21 @@ a fine trade for you. It is a trade.
 Turn it off and keep the status line:
 
 ```powershell
-.\Heis.ps1 -AddToProfile -AutoElevateOnLogin $false
+heis -AddToProfile -AutoElevateOnLogin $false
 ```
+
+**The installer may loosen your execution policy.** Windows PowerShell
+defaults to `Restricted`, which runs no script files at all. heis is a script
+file. When the policy is `Restricted`, the installer offers to set
+`RemoteSigned` for your user only (`-Scope CurrentUser`, no admin). That lets
+every local script run, not just heis, while still refusing downloaded ones
+that are unsigned. It asks first, defaulting to yes. Under `-Yes`, or with
+nobody to answer, it takes that default. It never changes a policy set by
+Group Policy, never loosens `AllSigned` unless you say so, and `-Uninstall`
+does not undo it, because other scripts may depend on it by then.
+
+**It adds one folder to your user PATH** and writes `heis.cmd` there. That
+change is user scope only, and `-Uninstall` removes both.
 
 **Your organisation may have opinions.** A tool that auto-confirms elevation
 prompts is the kind of thing worth mentioning to whoever runs your endpoint
