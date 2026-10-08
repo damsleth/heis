@@ -426,7 +426,11 @@ function Invoke-Elevate {
     $abr = Get-AbrState
     if ($abr.Active) { return "heisen g$($script:AA)r allerede - $($abr.Remaining) igjen" }
 
-    Start-Process -FilePath (Resolve-AbrExe) -ArgumentList '/Elevate' | Out-Null
+    # Started in ABR's own folder. Left to inherit, ABR takes the relay's
+    # working directory - %LOCALAPPDATA%\Heis - and its long-lived process
+    # holds that open for the whole session, so -Uninstall could not delete it.
+    $abrExe = Resolve-AbrExe
+    Start-Process -FilePath $abrExe -ArgumentList '/Elevate' -WorkingDirectory (Split-Path -Parent $abrExe) | Out-Null
 
     if (-not (Invoke-DialogLoop -Seconds $Seconds -Done { [bool](Get-AbrCountdown) })) {
         throw 'started Admin By Request but no countdown appeared'
@@ -821,14 +825,24 @@ function Show-HeisStatus {
     return $h
 }
 
-$heis = Show-HeisStatus
+# Quiet for anything that is not a person at a prompt. `ssh host <cmd>`, scp,
+# sftp and rsync all start the SSH server's shell with -c, or set
+# SSH_ORIGINAL_COMMAND. Printing there corrupts their stream - scp reads the
+# "ABR " of a status line as a message length and gives up - and the status
+# check costs a relay round trip on every single remote command.
+$HEIS_QUIET = [bool] $env:SSH_ORIGINAL_COMMAND -or
+              [bool] ([Environment]::GetCommandLineArgs() -match '^-(c|Command|EncodedCommand|f|File|noni|NonInteractive)$')
 
-# SSH_CONNECTION is set by the SSH server for its own sessions and by nothing
-# else - a better test than session id, which also catches services. At the
-# desktop you can take the heis by hand.
-if ($HEIS_AUTO_ELEVATE -and $env:SSH_CONNECTION -and $heis -and -not $heis.Active) {
-    & $HEIS_PATH | Out-Null
-    $heis = Show-HeisStatus      # report where that left things
+if (-not $HEIS_QUIET) {
+    $heis = Show-HeisStatus
+
+    # SSH_CONNECTION is set by the SSH server for its own sessions and by
+    # nothing else - a better test than session id, which also catches
+    # services. At the desktop you can take the heis by hand.
+    if ($HEIS_AUTO_ELEVATE -and $env:SSH_CONNECTION -and $heis -and -not $heis.Active) {
+        & $HEIS_PATH | Out-Null
+        $heis = Show-HeisStatus      # report where that left things
+    }
 }
 __END__
 '@
@@ -877,7 +891,38 @@ function Read-ProfileBlock {
     $auto   = $true
     if ($m.Value -match '(?m)^\$HEIS_PATH\s*=\s*''((?:[^'']|'''')*)''') { $target = $Matches[1].Replace("''", "'") }
     if ($m.Value -match '(?m)^\$HEIS_AUTO_ELEVATE\s*=\s*\$(\w+)')      { $auto   = $Matches[1] -eq 'true' }
-    [pscustomobject]@{ Path = $Path; Target = $target; AutoElevate = $auto }
+    # Guarded: stays quiet in non-interactive shells, by the template's test
+    # or a hand-made one. A block that is not prints into scp's stream.
+    $guarded = $m.Value -match 'SSH_ORIGINAL_COMMAND|GetCommandLineArgs|Quiet'
+    [pscustomobject]@{ Path = $Path; Target = $target; AutoElevate = $auto; Guarded = $guarded; Text = $m.Value }
+}
+
+# Point a profile's heis block at $Target, elevating or not - by editing just
+# those two lines when a block is already there, so everything else in it
+# survives. Returns whether the file changed.
+#
+# A hand-tuned block is somebody's work. Rewriting it from the template on every
+# upgrade threw that away, and on the machine this was built on that took out
+# the block's non-interactive guard and broke scp. Only a profile with no block
+# yet, or one too mangled to find the two lines in, gets the template.
+function Update-ProfileBlock {
+    param([Parameter(Mandatory)][string] $Path, [Parameter(Mandatory)][string] $Target, [bool] $AutoElevate = $true)
+
+    $b = Read-ProfileBlock -Path $Path
+    if (-not $b -or -not $b.Target) {
+        return (Set-ProfileBlock -Path $Path -Block (New-ProfileBlock -Target $Target -AutoElevate $AutoElevate))
+    }
+
+    # Match evaluators rather than replacement strings, because a path may hold
+    # a $ that a replacement string would read as a group reference.
+    $quoted = $Target.Replace("'", "''")
+    $auto   = if ($AutoElevate) { '$true' } else { '$false' }
+    $block  = [regex]::Replace($b.Text, '(?m)^(\$HEIS_PATH\s*=\s*)''(?:[^'']|'''')*''',
+                               { param($m) $m.Groups[1].Value + "'" + $quoted + "'" })
+    $block  = [regex]::Replace($block, '(?m)^(\$HEIS_AUTO_ELEVATE\s*=\s*)\$\w+',
+                               { param($m) $m.Groups[1].Value + $auto })
+    if ($block -ceq $b.Text) { return $false }
+    return (Set-ProfileBlock -Path $Path -Block $block)
 }
 
 # Put $Block into a profile file in place of any existing heis block, or with
@@ -894,10 +939,18 @@ function Set-ProfileBlock {
         return $false
     }
 
-    $pattern = [regex]::Escape($script:BlockBegin) + '.*?' + [regex]::Escape($script:BlockEnd)
-    $cleaned = ([regex]::Replace($existing, $pattern, '', 'Singleline')).TrimEnd()
+    $rx      = [regex]::new([regex]::Escape($script:BlockBegin) + '.*?' + [regex]::Escape($script:BlockEnd), 'Singleline')
+    $cleaned = $rx.Replace($existing, '').TrimEnd()
+    $first   = $rx.Match($existing)
 
-    if ($Block) {
+    if ($Block -and $first.Success) {
+        # Replaced where it stands. The profile around it may set things the
+        # block relies on - a quiet flag, say - so moving it to the end can
+        # change what it does. Any further copies are dropped.
+        if ($existing.Substring($first.Index, $first.Length) -ceq $Block) { return $false }
+        $updated = $existing.Substring(0, $first.Index) + $Block +
+                   $rx.Replace($existing.Substring($first.Index + $first.Length), '')
+    } elseif ($Block) {
         $updated = if ($cleaned) { "$cleaned`r`n`r`n$Block`r`n" } else { "$Block`r`n" }
     } else {
         if ($cleaned -eq $existing.TrimEnd()) { return $false }   # no block to remove
@@ -1187,18 +1240,31 @@ function Invoke-Doctor {
         $mode = if ($b.AutoElevate) { 'elevates over SSH' } else { 'status only' }
         if ($b.Target -and (Test-Path -LiteralPath $b.Target)) {
             if ($installed -and $b.Target -ne $self) {
-                # An install from before heis had a folder of its own, still
-                # running an old copy. Repointed, keeping its settings.
-                $null = Set-ProfileBlock -Path $b.Path -Block (New-ProfileBlock -Target $self -AutoElevate $b.AutoElevate)
-                New-Check 'logon block' fixed "$($b.Path) ran an older copy, $($b.Target).`nNow $self ($mode) - the old file can be deleted."
+                # An install from before heis had a folder of its own, or a
+                # clone. Repointed at the installed copy; only the path line
+                # changes, so its settings and any hand edits stay.
+                $null = Update-ProfileBlock -Path $b.Path -Target $self -AutoElevate $b.AutoElevate
+                New-Check 'logon block' fixed ("$($b.Path) ran another copy, $($b.Target).`n" +
+                    "Now $self ($mode). If the other one was an old install, it can be deleted.")
             } else {
                 New-Check 'logon block' ok "$($b.Path) ($mode)"
             }
         } elseif ($self) {
-            $null = Set-ProfileBlock -Path $b.Path -Block (New-ProfileBlock -Target $self -AutoElevate $b.AutoElevate)
+            $null = Update-ProfileBlock -Path $b.Path -Target $self -AutoElevate $b.AutoElevate
             New-Check 'logon block' fixed "$($b.Path) pointed at a missing file - now $self"
         } else {
             New-Check 'logon block' warn "$($b.Path) points at $($b.Target), which is gone. Re-run the installer."
+        }
+
+        # Blocks written before the template had its quiet guard print in every
+        # shell, `ssh host <cmd>` and scp included - and scp then fails with
+        # "Received message too long". Not rewritten here, because the block
+        # may be hand-edited; the refresh is one command away.
+        if (-not $b.Guarded) {
+            $flag = if ($b.AutoElevate) { '' } else { ' -AutoElevateOnLogin $false' }
+            New-Check 'logon block' warn ("$($b.Path) also prints in non-interactive shells, which breaks scp`n" +
+                "and sftp. Refresh it from the current template:`n" +
+                "  heis -AddToProfile:`$false; heis -AddToProfile$flag")
         }
     }
 
@@ -1327,7 +1393,11 @@ if ($Uninstall) {
     foreach ($dir in @($script:StateDir, $script:InstallDirDefault)) {
         if (-not (Test-Path -LiteralPath $dir)) { continue }
         Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
-        if (Test-Path -LiteralPath $dir) { $left += $dir } else { Write-Host "  fjernet $dir" -ForegroundColor DarkGray }
+        # Still there means something holds it open. An Admin By Request started
+        # by an older heis did, for its whole session: it inherited the relay's
+        # working directory. Gone after the next sign-out at the latest.
+        if (Test-Path -LiteralPath $dir) { $left += "$dir - in use; delete it after signing out" }
+        else { Write-Host "  fjernet $dir" -ForegroundColor DarkGray }
     }
     if ($PSCommandPath -and (Test-Path -LiteralPath $PSCommandPath)) {
         Write-Host "  $PSCommandPath er igjen - slett den selv om du vil" -ForegroundColor DarkGray
@@ -1390,7 +1460,9 @@ if ($settingsOnly -and -not $InSession) {
             Write-Host "  $PROFILE" -ForegroundColor DarkGray
         }
     } elseif ($setProfile) {
-        $null = Set-ProfileBlock -Path $PROFILE -Block (New-ProfileBlock -Target $self -AutoElevate $autoElevate)
+        # An existing block keeps its hand edits: only its path and elevate
+        # lines change. -AddToProfile:$false first, for a fresh template.
+        $null = Update-ProfileBlock -Path $PROFILE -Target $self -AutoElevate $autoElevate
         if ($autoElevate) {
             Write-Host 'Lagt til i profilen - heisen tas automatisk ved SSH-innlogging' -ForegroundColor Green
         } else {
