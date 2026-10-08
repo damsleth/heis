@@ -207,15 +207,24 @@ elevation request for every local console.
 ```powershell
 heis -AddToProfile                               # status, and elevate over SSH
 heis -AddToProfile -AutoElevateOnLogin $false    # status only
-heis -AddToProfile:$false                        # remove the block
+heis -AddToProfile:$false                        # remove the block (PowerShell only)
 heis -AddToPath:$false                           # take heis off the PATH
 ```
 
 From cmd, write `false` instead of `$false`:
-`heis -AddToProfile -AutoElevateOnLogin false`.
+`heis -AddToProfile -AutoElevateOnLogin false`. The `:$false` forms only
+work in PowerShell, because Windows PowerShell's `-File`, which `heis.cmd`
+uses, cannot pass them.
 
-Re-running replaces the block rather than adding another.
-`heis -AddToProfile:$false`, `heis -Uninstall` or deleting the block stops it. It edits the profile of the shell it runs
+Re-running updates the block in place. Only its path and its elevate setting
+change, so your own edits to it survive. For a fresh copy of the template,
+take it out and add it again:
+`heis -AddToProfile:$false; heis -AddToProfile`. `heis -Uninstall`, or
+deleting the block, stops it.
+
+The block stays quiet in shells that are not a person at a prompt, such as
+`ssh host <cmd>`, scp, sftp and rsync. Output there would corrupt their data
+stream. It edits the profile of the shell it runs
 under: `pwsh` and Windows PowerShell have separate profiles. Run it under the
 shell your SSH logins start. `heis -Doctor` checks the SSH server's
 `DefaultShell` and tells you if they differ.
@@ -283,6 +292,7 @@ If `heis` itself is not found, call the file:
 | `heis er avinstallert, unntatt: scheduled task …` | The task was created while elevated, and only an elevated shell can delete it. | Elevate through the Admin By Request tray icon, open an elevated shell, and run the `schtasks /delete` line it printed. |
 | `what came from … is not Heis.ps1` | A proxy or a login page answered instead. | Try again, or download it yourself: `irm https://heis.d0.si/Heis.ps1 -OutFile Heis.ps1`. |
 | `Could not create SSL/TLS secure channel` on the one-liner | Old Windows PowerShell offers TLS 1.0 first. | `[Net.ServicePointManager]::SecurityProtocol = 'Tls12'`, then run the one-liner again. |
+| scp or sftp fails with `Received message too long` | A logon block from before the quiet guard prints its status into scp's stream. | `heis -AddToProfile:$false; heis -AddToProfile`. `heis -Doctor` flags it. |
 | Logon block does nothing over SSH | The SSH server starts `cmd.exe`, or a PowerShell whose profile has no block. | `heis -Doctor` prints the exact command for your setup. |
 
 Before blaming heis, check what state the session is actually in. Most "it

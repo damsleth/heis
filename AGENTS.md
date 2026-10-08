@@ -209,6 +209,24 @@ type an `å` back in.
 - **`powershell -File` cannot pass a `[bool]`.** `heis.cmd` hands over the
   text `$false`, which a `[bool]` parameter rejects. So `-AutoElevateOnLogin`
   is a string, parsed for `$false`/`false`/`0`/`no`/`nei`.
+- **Start ABR with its own working directory.** It inherited the relay's,
+  `%LOCALAPPDATA%\Heis`, and its long-lived process kept that folder open for
+  the whole session, so `-Uninstall` could not delete it. Found with
+  `handle.exe` against the live box.
+- **The logon block must stay quiet in non-interactive shells.** Windows sshd
+  starts the DefaultShell for `ssh host <cmd>` and for scp's SFTP subsystem
+  too. One status line in there and scp dies with `Received message too
+  long 1094865440`, which is "ABR " read as a length. The template checks
+  `SSH_ORIGINAL_COMMAND` and `-c`/`-Command`/`-EncodedCommand`/`-File`.
+- **Never rewrite an existing logon block from the template.** People edit
+  them. The owner's block had its own quiet guard, an Entra-SID check and a
+  token-vs-group colour fix, and an upgrade that replaced it wholesale broke
+  scp. `Update-ProfileBlock` edits only the `$HEIS_PATH` and
+  `$HEIS_AUTO_ELEVATE` lines, in place. A fresh template means
+  `-AddToProfile:$false` first.
+- **5.1's `-File` cannot pass `:$false` to a switch either.** pwsh 7 can. So
+  `heis.cmd -AddToPath:$false` fails on parameter binding. It never elevates,
+  but cmd users cannot remove settings that way.
 - **A setting passed as `:$false` removes it.** `-AddToPath:$false` and
   `-AddToProfile:$false` take out what an earlier install set up. The
   installer always passes both, so answering "no" on an upgrade sticks rather
