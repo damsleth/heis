@@ -7,3 +7,6 @@
 .idea/
 Thumbs.db
 desktop.ini
+
+# Written by heis -AddToPath when the checkout itself is the folder on the PATH.
+heis.cmd
