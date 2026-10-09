@@ -1,25 +1,18 @@
 # Notes for whoever works on this next
 
-`README.md` says what it does. This file is the hard-won part: things that cost
-real debugging to establish and are not visible in the code.
-
-This repo started as a general AutoHotkey automation toolkit and narrowed to
-one job. The agent, its command queue and its client are gone — if you ever
-need them, they are in the git history before the single-purpose rewrite. What
-survived is the reasoning, because most of it is why `Heis.ps1` is shaped the
-way it is.
+`README.md` and `DOCS.md` say what heis does. This file lists instructions, caveats, traps and reasoning for the underlying automation mechanisms it employs.
 
 ## The two kinds of automation
 
-This is the load-bearing fact. Everything else follows from it.
+This is the axiom. Everything else follows from it.
 
-| | mechanism | works disconnected |
+| what | mechanism | works disconnected |
 | --- | --- | --- |
-| window messages — `BM_CLICK`, `WM_SETTEXT`, enumeration | posted to a control | **yes** |
-| synthetic input — `SendInput`, mouse, keystrokes | needs the input desktop | **no** |
+| window messages: `BM_CLICK`, `WM_SETTEXT`, enumeration | posted to a control | **yes** |
+| synthetic input: `SendInput`, mouse, keystrokes | needs the input desktop | **no** |
 
 Synthetic input reaches only the session's *live input desktop*. Lock the
-session, disconnect RDP, or park it on a console and input goes nowhere — and
+session, disconnect RDP, or park it on a console and input goes nowhere, and
 **Windows reports success the whole time**. `SendInput` returns 1 while
 delivering nothing.
 
@@ -34,10 +27,10 @@ finish an ABR session, elevate again, both dialogs clicked, nobody connected.
 
 **A healthy-looking desktop does not mean input works.** Session state
 `Active`, `OpenInputDesktop` succeeds, desktop is `Default`, `SendInput`
-returns 1 — and the cursor does not move.
+returns 1, and the cursor does not move.
 
 The usual cause is **UIPI**: an elevated foreground window silently blocks
-injection from a medium-integrity process. Reproduced by toggling focus —
+injection from a medium-integrity process. Reproduced by toggling focus:
 elevated console in front, nothing lands; taskbar in front, it works. It does
 not affect message-based automation, which is another reason to prefer it.
 
@@ -53,7 +46,7 @@ causes, never separated, and a confident wrong conclusion written down as fact.
   so a process there can neither see nor message the desktop's windows. That is
   the entire reason the relay task exists.
 - The relay is a scheduled task set to *run only when the user is logged on*.
-  **No administrator rights are needed** — verified: creating a task as a
+  **No administrator rights are needed**. Verified: creating a task as a
   non-admin over SSH succeeds.
 - An interactive session must exist, though it may be disconnected. Checked up
   front via an `explorer.exe` outside session 0, because `schtasks /run`
@@ -68,13 +61,13 @@ can rather than reporting it.
 - **Drive the outcome, not a script of steps.** `Invoke-DialogLoop` answers
   whatever known dialog is on screen until the countdown appears. An earlier
   version replayed one exact sequence and would wait for a second dialog that
-  does not always come — then call a run that had already succeeded a failure.
+  does not always come, then call a run that had already succeeded a failure.
 - **Several captions per button** (`Yes`/`Ja`/`Continue`), so a localised or
   reworded dialog still gets answered.
 - **Find the exe, do not assert it.** Running image first, then both Program
   Files roots, then a depth-limited search.
 - **Fall back to a second task name.** The canonical task can be unwritable
-  through no fault of the run — see below — and a spare task beats a dead end.
+  through no fault of the run (see below), and a spare task beats a dead end.
 - **Fail fast only on what cannot be repaired**, and say what would fix it.
 
 ## Things that look harmless and are not
@@ -82,7 +75,7 @@ can rather than reporting it.
 - **Do not re-register the relay task on every run.** A task first created
   while ABR had granted admin carries a security descriptor an unelevated
   account cannot overwrite, so every later run from a plain SSH shell died on
-  "Access is denied" — while the existing task was perfectly good and would
+  "Access is denied", while the existing task was perfectly good and would
   have worked untouched. Read its action first; only register when missing or
   wrong.
 - **Never `Get-AbrState` from a poll loop.** It shells out to `net localgroup`.
@@ -94,12 +87,12 @@ can rather than reporting it.
   is not, and then it presses a button on the wrong dialog.
 - **Address buttons by caption, never by index.** Ordering is an artefact of
   creation order. On ABR's confirm dialog the buttons are **No first, Yes
-  second**. Two conclusions in this repo's history — both "this primitive is
-  broken" — were wrong tests pressing the wrong button.
+  second**. Two conclusions in this repo's history (both "this primitive is
+  broken") were wrong tests pressing the wrong button.
 - **`Press-Button` considers only BUTTON-class controls.** A substring match
   over every control will happily find "OK" inside a label and click nothing.
 - **The in-session side ignores a `request.json` older than three minutes.**
-  Without that, anything that starts the task — a person, a stale trigger —
+  Without that, anything that starts the task (a person, a stale trigger)
   replays the last request and silently elevates.
 
 ## Encoding: pure ASCII, no BOM
@@ -107,7 +100,7 @@ can rather than reporting it.
 Both scripts must stay **pure ASCII with no BOM**. This is not tidiness; it is
 the only encoding that survives both ways they are run:
 
-- As a file under **Windows PowerShell 5.1** — which the relay uses — a `.ps1`
+- As a file under **Windows PowerShell 5.1**, which the relay uses, a `.ps1`
   is read as ANSI unless it carries a BOM, mangling every non-ASCII character.
 - **Piped from a URL**, `irm … | iex` keeps the BOM as a *character*, and
   PowerShell then refuses to parse the script at all. It fails to recognise the
@@ -123,7 +116,7 @@ type an `å` back in.
 - **The scheduled task names the account by SID**, not `DOMAIN\user`. An SSH
   login reports `USERDOMAIN` as `WORKGROUP`, which does not resolve, and Task
   Scheduler answers "No mapping between account names and security IDs".
-- **Hardcode Windows PowerShell's absolute path**, not `$PSHOME` — under pwsh 7
+- **Hardcode Windows PowerShell's absolute path**, not `$PSHOME`: under pwsh 7
   that points at `pwsh.exe`, which a downloaded copy cannot assume exists.
 - **`$MyInvocation.MyCommand.ScriptBlock` describes the CALLER under `iex`.**
   It returned a few hundred bytes of the invoking wrapper, which got written
@@ -132,14 +125,14 @@ type an `å` back in.
 - **Splat a hashtable, not an array.** Array splatting passes *positionally*:
   `@('-Verify')` bound the string to `-Exe` and ran the default action against
   a nonsense path. It looked like it worked, because the exe lookup healed past
-  the bad value — self-healing hides bugs as well as it hides faults.
+  the bad value. Self-healing hides bugs as well as it hides faults.
 - **`[WindowsPrincipal]::IsInRole` is a snapshot.** A process token carries the
   group membership it was born with, so a shell started before elevation
   answers "not admin" for the rest of its life. Use live group membership, and
   prefer a function over a variable so it cannot go stale.
 - **`$PROFILE` may be a OneDrive placeholder.** With Documents redirected,
   `Get-Item` reports `Length 0` and a stale `LastWriteTime` for a dehydrated
-  file — the profile read as 0 bytes while holding 2257 bytes of content, which
+  file. The profile read as 0 bytes while holding 2257 bytes of content, which
   looks exactly like having just destroyed it. `ReadAllBytes`/`ReadAllText`
   hydrate it. Never branch on `.Length` there.
 - **Raw URLs are case-sensitive, and `core.ignorecase` hides renames.** Git
@@ -253,13 +246,13 @@ A Windows 365 Cloud PC, and some of it is specific to that:
 - The user is **not a local administrator**, so `tscon`, `Get-ScheduledTask`,
   `Get-CimInstance`, `Get-WinEvent` and `Win32_Process` all fail from SSH. Use
   `schtasks` and registry reads; they work unprivileged.
-- **Windows Script Host is policy-blocked** — a `.vbs` opens a *Windows Script
+- **Windows Script Host is policy-blocked**: a `.vbs` opens a *Windows Script
   Host Settings* dialog instead of running. Do not build test fixtures on it.
 - RDP resolution and DPI change under a running process as the client window is
   resized or moved between displays. Never cache geometry.
 - `tscon`-ing a disconnected session onto the console was tried and removed. It
   exists to make `SendInput` work unattended, which message-based automation
-  makes unnecessary — and the task fired on reconnect too, pulling the session
+  makes unnecessary. And the task fired on reconnect too, pulling the session
   back and locking the machine out of RDP entirely.
 
 ## Testing
@@ -279,11 +272,11 @@ Run each file through `| iex` and through a script block, and check that the
 calling shell survives a failure. The profile-block helpers can be lifted out
 by AST and round-tripped against a temp file.
 
-`README.md` names exact error messages in its troubleshooting table. When you
+`DOCS.md` names exact error messages in its troubleshooting table. When you
 change a `throw`, change the table with it.
 
 Prompts are skipped when stdin is redirected, so `Install.ps1` is safe to run
-from automation — it takes the defaults. Use `-Yes` to be explicit.
+from automation; it takes the defaults. Use `-Yes` to be explicit.
 
 Before claiming an elevation change works, check what state the session is
 actually in first. Most "it did nothing" reports are the session, not the code.
@@ -291,7 +284,7 @@ actually in first. Most "it did nothing" reports are the session, not the code.
 ## Style
 
 Comments explain **why**, especially where the code looks like it could be
-simpler — most of the odd-looking choices here are load-bearing and annotated
+simpler. Most of the odd-looking choices here are on purpose and annotated
 with the failure that motivated them. Keep that. PowerShell must parse under
 Windows PowerShell 5.1: no ternaries, and no `if`-expressions in hashtable
 values.

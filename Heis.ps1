@@ -1,17 +1,17 @@
 <#
 .SYNOPSIS
-    Kjoer heisen - request Admin By Request elevation. One file, no dependencies.
+    Heis - request Admin By Request elevation. One file, no dependencies.
 
 .DESCRIPTION
     Launches Admin By Request with /Elevate and clicks through its dialogs. Works
     with nobody connected over RDP, because it drives the dialogs with window
     messages rather than by moving a mouse that has no screen to move on.
 
-    Install it - one line, guided, no administrator rights:
+    one line installation:
 
         irm https://heis.d0.si/install.ps1 | iex
 
-    That puts Heis.ps1 in %LOCALAPPDATA%\Programs\Heis, adds `heis` to your
+    Puts Heis.ps1 in %LOCALAPPDATA%\Programs\Heis, adds `heis` to your
     PATH, and checks the whole path end to end. After that it is just `heis`.
 
     Run it from anywhere:
