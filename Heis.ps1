@@ -1230,7 +1230,14 @@ function Invoke-Doctor {
         $dir  = Split-Path -Parent $self
         $shim = Join-Path $dir 'heis.cmd'
         if (-not (Test-Path -LiteralPath $shim)) {
-            New-Check 'PATH' info 'heis is not on the PATH. heis -AddToPath puts it there.'
+            # A checkout's folder on the PATH is enough for PowerShell, which
+            # runs Heis.ps1 as `heis` directly. Saying "not on the PATH" then
+            # contradicts the very command that printed it.
+            if (@($env:Path -split ';' | Where-Object { $_.TrimEnd('\') -eq $dir.TrimEnd('\') }).Count -gt 0) {
+                New-Check 'PATH' info "$dir - PowerShell only, no heis.cmd for cmd.exe. heis -AddToPath adds one."
+            } else {
+                New-Check 'PATH' info 'heis is not on the PATH. heis -AddToPath puts it there.'
+            }
         } elseif (-not ([IO.File]::ReadAllText($shim)).Contains($script:ShimMarker)) {
             New-Check 'PATH' warn "$shim was not written by heis - left alone, and $dir not added to the PATH."
         } else {
