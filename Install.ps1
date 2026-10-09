@@ -44,25 +44,25 @@
 #>
 [CmdletBinding()]
 param(
-    # Folder for Heis.ps1. Default: wherever heis already is, otherwise
-    # %LOCALAPPDATA%\Programs\Heis.
-    [string] $Path,
+  # Folder for Heis.ps1. Default: wherever heis already is, otherwise
+  # %LOCALAPPDATA%\Programs\Heis.
+  [string] $Path,
 
-    # Pre-answer the prompts. Left unset, they are asked for.
-    [nullable[bool]] $AddToPath,
-    [nullable[bool]] $AddToProfile,
-    [nullable[bool]] $AutoElevateOnLogin,
-    [nullable[bool]] $Verify,
+  # Pre-answer the prompts. Left unset, they are asked for.
+  [nullable[bool]] $AddToPath,
+  [nullable[bool]] $AddToProfile,
+  [nullable[bool]] $AutoElevateOnLogin,
+  [nullable[bool]] $Verify,
 
-    # Take every default without asking.
-    [switch] $Yes,
+  # Take every default without asking.
+  [switch] $Yes,
 
-    # Where to fetch Heis.ps1 from.
-    [string] $SourceUrl = 'https://heis.d0.si/Heis.ps1',
+  # Where to fetch Heis.ps1 from.
+  [string] $SourceUrl = 'https://heis.d0.si/Heis.ps1',
 
-    # Replace an existing Heis.ps1 without asking, and install even when
-    # Admin By Request is not where it is usually found.
-    [switch] $Force
+  # Replace an existing Heis.ps1 without asking, and install even when
+  # Admin By Request is not where it is usually found.
+  [switch] $Force
 )
 
 # Everything runs in a child scope. Piped into iex, this file executes in the
@@ -75,7 +75,7 @@ param(
 # here and restored in the finally below.
 $heisProcessPolicy = Get-ExecutionPolicy -Scope Process
 try {
-$heisInstallReady = & {
+  $heisInstallReady = & {
     $ErrorActionPreference = 'Stop'
 
     # Norwegian output is composed from character codes so this file stays pure
@@ -83,14 +83,14 @@ $heisInstallReady = & {
     # to survive Windows PowerShell 5.1, and a BOM is exactly what stops
     # `irm | iex` parsing it. {a} {o} {ae} stand in for the missing letters.
     function T([string] $s) {
-        $s.Replace('{a}', [string][char]0xE5).Replace('{o}', [string][char]0xF8).Replace('{ae}', [string][char]0xE6)
+      $s.Replace('{a}', [string][char]0xE5).Replace('{o}', [string][char]0xF8).Replace('{ae}', [string][char]0xE6)
     }
     function Say([string] $Text, [string] $Color = 'Gray') {
-        Write-Host ('  ' + (T $Text)) -ForegroundColor $Color
+      Write-Host ('  ' + (T $Text)) -ForegroundColor $Color
     }
     function Step([int] $N, [string] $Text) {
-        Write-Host ''
-        Write-Host (T "[$N/5] $Text") -ForegroundColor Cyan
+      Write-Host ''
+      Write-Host (T "[$N/5] $Text") -ForegroundColor Cyan
     }
 
     # Prompting something that cannot answer hangs it forever, and this is run
@@ -98,20 +98,20 @@ $heisInstallReady = & {
     $canAsk = -not $Yes -and -not [Console]::IsInputRedirected -and [Environment]::UserInteractive
 
     function Read-YesNo([string] $Question, [bool] $Default = $true) {
-        if (-not $canAsk) { return $Default }
-        $hint = if ($Default) { '[J/n]' } else { '[j/N]' }
-        while ($true) {
-            $answer = ([string](Read-Host (T "  $Question $hint"))).Trim()
-            if (-not $answer)                     { return $Default }
-            if ($answer -match '^(j|ja|y|yes)$')  { return $true }
-            if ($answer -match '^(n|nei|no)$')    { return $false }
-        }
+      if (-not $canAsk) { return $Default }
+      $hint = if ($Default) { '[J/n]' } else { '[j/N]' }
+      while ($true) {
+        $answer = ([string](Read-Host (T "  $Question $hint"))).Trim()
+        if (-not $answer) { return $Default }
+        if ($answer -match '^(j|ja|y|yes)$') { return $true }
+        if ($answer -match '^(n|nei|no)$') { return $false }
+      }
     }
 
     function Read-Text([string] $Question, [string] $Default) {
-        if (-not $canAsk) { return $Default }
-        $answer = ([string](Read-Host (T "  $Question [$Default]"))).Trim().Trim('"')
-        if ($answer) { return $answer } else { return $Default }
+      if (-not $canAsk) { return $Default }
+      $answer = ([string](Read-Host (T "  $Question [$Default]"))).Trim().Trim('"')
+      if ($answer) { return $answer } else { return $Default }
     }
 
     Write-Host @'
@@ -136,7 +136,7 @@ $heisInstallReady = & {
     $heisCmd = 'heis'
 
     if ([Environment]::OSVersion.Platform -ne 'Win32NT') {
-        throw 'heis runs on Windows - on the machine that has Admin By Request installed.'
+      throw 'heis runs on Windows - on the machine that has Admin By Request installed.'
     }
     $edition = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'Windows PowerShell' }
     Say "$edition $($PSVersionTable.PSVersion)" Green
@@ -144,8 +144,9 @@ $heisInstallReady = & {
     # Windows PowerShell 5.1 on an older .NET still offers TLS 1.0 first, which
     # the host refuses. Adding 1.2 is harmless where it is already on.
     try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    } catch { }
+      [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    }
+    catch { }
 
     # A quick look, not Heis.ps1's full search: enough to stop someone without
     # ABR before they answer questions about a tool that cannot work for them.
@@ -153,20 +154,22 @@ $heisInstallReady = & {
     $running = Get-Process -Name 'AdminByRequest' -ErrorAction SilentlyContinue | Select-Object -First 1
     try { if ($running -and $running.Path) { $abr = $running.Path } } catch { }   # denied on a more privileged process
     foreach ($root in @(${env:ProgramFiles(x86)}, $env:ProgramFiles)) {
-        if ($abr -or -not $root) { continue }
-        $candidate = Join-Path $root 'FastTrack Software\Admin By Request\AdminByRequest.exe'
-        if (Test-Path -LiteralPath $candidate) { $abr = $candidate }
+      if ($abr -or -not $root) { continue }
+      $candidate = Join-Path $root 'FastTrack Software\Admin By Request\AdminByRequest.exe'
+      if (Test-Path -LiteralPath $candidate) { $abr = $candidate }
     }
     if ($abr) {
-        Say "Admin By Request: $abr" Green
-    } elseif ($running) {
-        Say 'Admin By Request kj{o}rer' Green
-    } else {
-        Say 'Fant ikke Admin By Request p{a} vanlig sted.' Yellow
-        Say 'heis klikker i ABR sine dialoger, s{a} uten ABR er det ingen heis {a} ta.' DarkGray
-        if (-not ($Force -or (Read-YesNo 'Installere likevel? (heis -Doctor leter grundigere etterp{a})' $false))) {
-            throw 'Admin By Request is not installed. Install the ABR client, then run this again.'
-        }
+      Say "Admin By Request: $abr" Green
+    }
+    elseif ($running) {
+      Say 'Admin By Request kj{o}rer' Green
+    }
+    else {
+      Say 'Fant ikke Admin By Request p{a} vanlig sted.' Yellow
+      Say 'heis klikker i ABR sine dialoger, s{a} uten ABR er det ingen heis {a} ta.' DarkGray
+      if (-not ($Force -or (Read-YesNo 'Installere likevel? (heis -Doctor leter grundigere etterp{a})' $false))) {
+        throw 'Admin By Request is not installed. Install the ABR client, then run this again.'
+      }
     }
 
     # Windows PowerShell on a client defaults to Restricted: no .ps1 file runs
@@ -181,53 +184,57 @@ $heisInstallReady = & {
     $policy = $null
     $locked = $false
     foreach ($entry in @(Get-ExecutionPolicy -List)) {
-        $p = [string]$entry.ExecutionPolicy
-        if ($policy -or [string]$entry.Scope -eq 'Process' -or $p -eq 'Undefined') { continue }
-        $policy = $p
-        $locked = ([string]$entry.Scope -like '*Policy')
+      $p = [string]$entry.ExecutionPolicy
+      if ($policy -or [string]$entry.Scope -eq 'Process' -or $p -eq 'Undefined') { continue }
+      $policy = $p
+      $locked = ([string]$entry.Scope -like '*Policy')
     }
     if (-not $policy) {
-        # Nothing set: Restricted on a Windows client, RemoteSigned on a server,
-        # whichever edition this is - same rule as Get-DefaultPolicy in Heis.ps1.
-        $policy = 'Restricted'
-        try {
-            $type = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ProductOptions' -ErrorAction Stop).ProductType
-            if ($type -and $type -ne 'WinNT') { $policy = 'RemoteSigned' }
-        } catch { }
+      # Nothing set: Restricted on a Windows client, RemoteSigned on a server,
+      # whichever edition this is - same rule as Get-DefaultPolicy in Heis.ps1.
+      $policy = 'Restricted'
+      try {
+        $type = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ProductOptions' -ErrorAction Stop).ProductType
+        if ($type -and $type -ne 'WinNT') { $policy = 'RemoteSigned' }
+      }
+      catch { }
     }
 
     if ($policy -notin 'Restricted', 'AllSigned') {
-        Say "ExecutionPolicy: $policy" Green
-    } elseif ($locked) {
-        throw ("PowerShell is locked to $policy by group policy, so no script file can run here - " +
-               "and heis is one. Ask whoever manages this machine.")
-    } else {
-        Say "PowerShell kj{o}rer ikke skriptfiler her (ExecutionPolicy $policy)." Yellow
-        Say 'heis er et skript. RemoteSigned for din bruker er vanlig, og krever ikke admin.' DarkGray
-        # AllSigned is somebody's deliberate choice, so it is not loosened by default.
-        $allowed = $false
-        if (Read-YesNo 'Tillate skript for din bruker (RemoteSigned)?' ($policy -eq 'Restricted')) {
-            # The cmdlet throws "overridden by a more specific scope" when the
-            # Process scope is set, after the change has already been made. So
-            # the error is ignored and the stored setting is what counts.
-            try { Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force } catch { }
-            $allowed = ([string](Get-ExecutionPolicy -Scope CurrentUser) -eq 'RemoteSigned')
+      Say "ExecutionPolicy: $policy" Green
+    }
+    elseif ($locked) {
+      throw ("PowerShell is locked to $policy by group policy, so no script file can run here - " +
+        "and heis is one. Ask whoever manages this machine.")
+    }
+    else {
+      Say "PowerShell kj{o}rer ikke skriptfiler her (ExecutionPolicy $policy)." Yellow
+      Say 'heis er et skript. RemoteSigned for din bruker er vanlig, og krever ikke admin.' DarkGray
+      # AllSigned is somebody's deliberate choice, so it is not loosened by default.
+      $allowed = $false
+      if (Read-YesNo 'Tillate skript for din bruker (RemoteSigned)?' ($policy -eq 'Restricted')) {
+        # The cmdlet throws "overridden by a more specific scope" when the
+        # Process scope is set, after the change has already been made. So
+        # the error is ignored and the stored setting is what counts.
+        try { Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force } catch { }
+        $allowed = ([string](Get-ExecutionPolicy -Scope CurrentUser) -eq 'RemoteSigned')
+      }
+      if ($allowed) {
+        Say 'ExecutionPolicy: RemoteSigned for din bruker' Green
+      }
+      else {
+        # Bypass for this process only, and only until the install is done:
+        # the finally at the bottom puts the Process scope back, so under
+        # `irm | iex` the user's shell is not left bypassing a policy they
+        # just declined to loosen. heis.cmd brings its own Bypass, so heis
+        # still works from the PATH - but PowerShell resolves `heis` to
+        # Heis.ps1 first, so there it has to be typed as heis.cmd.
+        if ([string](Get-ExecutionPolicy) -in 'Restricted', 'AllSigned') {
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
         }
-        if ($allowed) {
-            Say 'ExecutionPolicy: RemoteSigned for din bruker' Green
-        } else {
-            # Bypass for this process only, and only until the install is done:
-            # the finally at the bottom puts the Process scope back, so under
-            # `irm | iex` the user's shell is not left bypassing a policy they
-            # just declined to loosen. heis.cmd brings its own Bypass, so heis
-            # still works from the PATH - but PowerShell resolves `heis` to
-            # Heis.ps1 first, so there it has to be typed as heis.cmd.
-            if ([string](Get-ExecutionPolicy) -in 'Restricted', 'AllSigned') {
-                Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-            }
-            Say 'Policyen er uendret. I PowerShell m{a} du skrive heis.cmd i stedet for heis.' Yellow
-            $heisCmd = 'heis.cmd'
-        }
+        Say 'Policyen er uendret. I PowerShell m{a} du skrive heis.cmd i stedet for heis.' Yellow
+        $heisCmd = 'heis.cmd'
+      }
     }
 
     # --- 2. fetch --------------------------------------------------------------
@@ -235,14 +242,14 @@ $heisInstallReady = & {
 
     # Re-running is the update path, so default to wherever heis already is.
     $defaultDir = Join-Path $env:LOCALAPPDATA 'Programs\Heis'
-    $existing   = Get-Command 'heis.cmd' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    $existing = Get-Command 'heis.cmd' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($existing) { $defaultDir = Split-Path -Parent $existing.Source }
 
     $destination = if ($Path) { $Path } else { Read-Text 'Hvor skal Heis.ps1 ligge?' $defaultDir }
     # Resolved against the PowerShell location, not the process directory,
     # which is what [IO.Path]::GetFullPath would use - they differ after a cd.
     $destination = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath(
-        [Environment]::ExpandEnvironmentVariables($destination))
+      [Environment]::ExpandEnvironmentVariables($destination))
     $target = Join-Path $destination 'Heis.ps1'
 
     # Must match $script:Marker in Heis.ps1 exactly - see the note there on why
@@ -255,37 +262,39 @@ $heisInstallReady = & {
     $beside = $null
     if ($PSScriptRoot) { $beside = Join-Path $PSScriptRoot 'Heis.ps1' }
     if ($beside -and (Test-Path -LiteralPath $beside) -and
-        ([IO.Path]::GetFullPath($beside) -ne [IO.Path]::GetFullPath($target))) {
-        $source = [IO.File]::ReadAllText($beside)
-        $from   = $beside
-    } else {
-        Say "Henter $SourceUrl" DarkGray
-        $source = Invoke-RestMethod -Uri $SourceUrl -UseBasicParsing
-        $from   = $SourceUrl
+      ([IO.Path]::GetFullPath($beside) -ne [IO.Path]::GetFullPath($target))) {
+      $source = [IO.File]::ReadAllText($beside)
+      $from = $beside
+    }
+    else {
+      Say "Henter $SourceUrl" DarkGray
+      $source = Invoke-RestMethod -Uri $SourceUrl -UseBasicParsing
+      $from = $SourceUrl
     }
     if (-not ($source -is [string]) -or -not $source.Contains($marker)) {
-        throw ("what came from $from is not Heis.ps1 - a proxy or a login page, perhaps. " +
-               "Try again, or fetch it by hand:  irm $SourceUrl -OutFile Heis.ps1")
+      throw ("what came from $from is not Heis.ps1 - a proxy or a login page, perhaps. " +
+        "Try again, or fetch it by hand:  irm $SourceUrl -OutFile Heis.ps1")
     }
 
     # Whether this folder already had heis, for the PATH default in step 3.
     $hadTarget = Test-Path -LiteralPath $target
     $write = $true
     if (Test-Path -LiteralPath $target) {
-        if ([IO.File]::ReadAllText($target) -ceq $source) {
-            $write = $false
-            Say "Heis.ps1 er allerede nyeste versjon: $target" Green
-        } elseif (-not ($Force -or (Read-YesNo "Det ligger en annen Heis.ps1 i $destination. Oppdatere den?" $true))) {
-            $write = $false
-            Say 'Beholder den som ligger der' Yellow
-        }
+      if ([IO.File]::ReadAllText($target) -ceq $source) {
+        $write = $false
+        Say "Heis.ps1 er allerede nyeste versjon: $target" Green
+      }
+      elseif (-not ($Force -or (Read-YesNo "Det ligger en annen Heis.ps1 i $destination. Oppdatere den?" $true))) {
+        $write = $false
+        Say 'Beholder den som ligger der' Yellow
+      }
     }
     if ($write) {
-        New-Item -ItemType Directory -Path $destination -Force | Out-Null
-        # No BOM: Heis.ps1 is pure ASCII and does not need one, and a BOM would
-        # break anyone who later serves this copy over HTTP and pipes it to iex.
-        [IO.File]::WriteAllText($target, $source, [Text.UTF8Encoding]::new($false))
-        Say "Heis.ps1 -> $target" Green
+      New-Item -ItemType Directory -Path $destination -Force | Out-Null
+      # No BOM: Heis.ps1 is pure ASCII and does not need one, and a BOM would
+      # break anyone who later serves this copy over HTTP and pipes it to iex.
+      [IO.File]::WriteAllText($target, $source, [Text.UTF8Encoding]::new($false))
+      Say "Heis.ps1 -> $target" Green
     }
 
     # --- 3. wire up ------------------------------------------------------------
@@ -295,7 +304,7 @@ $heisInstallReady = & {
     # installed without PATH on purpose, so there the default is no.
     $pathDefault = -not ($hadTarget -and -not $existing)
     $wantPath = if ($null -ne $AddToPath) { [bool]$AddToPath }
-                else { Read-YesNo 'Legge heis i PATH, s{a} du kan skrive heis i alle terminaler?' $pathDefault }
+    else { Read-YesNo 'Legge heis i PATH, s{a} du kan skrive heis i alle terminaler?' $pathDefault }
 
     # On an upgrade, the current setup is the default, so Enter (or -Yes) keeps
     # it - rather than quietly switching auto-elevation back on for someone
@@ -306,29 +315,30 @@ $heisInstallReady = & {
     # repoints it at the new copy without touching them. A block only over
     # there means this shell was left out on purpose, so the default is no.
     $profileDefault = $true
-    $autoDefault    = $true
-    $docs  = [Environment]::GetFolderPath('MyDocuments')
+    $autoDefault = $true
+    $docs = [Environment]::GetFolderPath('MyDocuments')
     $texts = @(@([string]$PROFILE,
-                 (Join-Path $docs 'WindowsPowerShell\Microsoft.PowerShell_profile.ps1'),
-                 (Join-Path $docs 'PowerShell\Microsoft.PowerShell_profile.ps1')) |
-        Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
-        ForEach-Object { [IO.File]::ReadAllText($_) })
+        (Join-Path $docs 'WindowsPowerShell\Microsoft.PowerShell_profile.ps1'),
+        (Join-Path $docs 'PowerShell\Microsoft.PowerShell_profile.ps1')) |
+      Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
+      ForEach-Object { [IO.File]::ReadAllText($_) })
     $here = ''
     if ($PROFILE -and (Test-Path -LiteralPath $PROFILE)) { $here = [IO.File]::ReadAllText($PROFILE) }
     $m = [regex]::Match($here, '(?s)# >>> heis >>>.*?# <<< heis <<<')
     if ($m.Success) {
-        $autoDefault = -not ($m.Value -match '(?m)^\$HEIS_AUTO_ELEVATE\s*=\s*\$false')
-    } elseif ($existing -or @($texts | Where-Object { $_.Contains('# >>> heis >>>') }).Count) {
-        $profileDefault = $false
+      $autoDefault = -not ($m.Value -match '(?m)^\$HEIS_AUTO_ELEVATE\s*=\s*\$false')
+    }
+    elseif ($existing -or @($texts | Where-Object { $_.Contains('# >>> heis >>>') }).Count) {
+      $profileDefault = $false
     }
 
     $wantProfile = if ($null -ne $AddToProfile) { [bool]$AddToProfile }
-                   else { Read-YesNo 'Vise heis-status n{a}r PowerShell starter (legg til i $PROFILE)?' $profileDefault }
+    else { Read-YesNo 'Vise heis-status n{a}r PowerShell starter (legg til i $PROFILE)?' $profileDefault }
 
     $wantAuto = $false
     if ($wantProfile) {
-        $wantAuto = if ($null -ne $AutoElevateOnLogin) { [bool]$AutoElevateOnLogin }
-                    else { Read-YesNo 'Ta heisen automatisk ved SSH-innlogging?' $autoDefault }
+      $wantAuto = if ($null -ne $AutoElevateOnLogin) { [bool]$AutoElevateOnLogin }
+      else { Read-YesNo 'Ta heisen automatisk ved SSH-innlogging?' $autoDefault }
     }
 
     # Heis.ps1 owns these settings, so this just passes the answers through.
@@ -354,21 +364,23 @@ $heisInstallReady = & {
     Step 5 'Tester'
 
     if (-not $healthy) {
-        Say 'Hopper over testen. Fiks det som er merket fail over, og kj{o}r heis -Verify.' Yellow
-    } else {
-        $test = if ($null -ne $Verify) { [bool]$Verify }
-                else { Read-YesNo 'Teste hele veien n{a}? Det tar heisen, hvis den ikke g{a}r allerede' $true }
-        if ($test) {
-            # Captured rather than left to fall through. Heis.ps1 writes its
-            # result to the pipeline while this script reports with Write-Host,
-            # and those two do not interleave predictably - the completion line
-            # printed before the verification it was reporting on.
-            $result = & $target -Verify
-            if ($LASTEXITCODE -ne 0) { throw 'the test failed - see the message above. heis -Doctor checks every part.' }
-            Say "$result" Green
-        } else {
-            Say 'Hoppet over. heis -Verify tester n{a}r du vil.' DarkGray
-        }
+      Say 'Hopper over testen. Fiks det som er merket fail over, og kj{o}r heis -Verify.' Yellow
+    }
+    else {
+      $test = if ($null -ne $Verify) { [bool]$Verify }
+      else { Read-YesNo 'Teste hele veien n{a}? Det tar heisen, hvis den ikke g{a}r allerede' $true }
+      if ($test) {
+        # Captured rather than left to fall through. Heis.ps1 writes its
+        # result to the pipeline while this script reports with Write-Host,
+        # and those two do not interleave predictably - the completion line
+        # printed before the verification it was reporting on.
+        $result = & $target -Verify
+        if ($LASTEXITCODE -ne 0) { throw 'the test failed - see the message above. heis -Doctor checks every part.' }
+        Say "$result" Green
+      }
+      else {
+        Say 'Hoppet over. heis -Verify tester n{a}r du vil.' DarkGray
+      }
     }
 
     # --- done ------------------------------------------------------------------
@@ -376,13 +388,14 @@ $heisInstallReady = & {
     # fail the moment the finally below puts the policy back, so name the one
     # form that works. The logon block cannot load under that policy either.
     $run = if ($wantPath) { $heisCmd }
-           elseif ($heisCmd -eq 'heis.cmd') { "powershell -NoProfile -ExecutionPolicy Bypass -File '$target'" }
-           else { "& '$target'" }
+    elseif ($heisCmd -eq 'heis.cmd') { "powershell -NoProfile -ExecutionPolicy Bypass -File '$target'" }
+    else { "& '$target'" }
     Write-Host ''
     if ($healthy) {
-        Write-Host (T 'Ferdig - ha det g{o}y med {a} kj{o}re heis!') -ForegroundColor Green
-    } else {
-        Write-Host (T 'Installert, men ikke klar enn{a} - se fail-linjene i steg 4.') -ForegroundColor Yellow
+      Write-Host (T 'Ferdig - ha det g{o}y med {a} kj{o}re heis!') -ForegroundColor Green
+    }
+    else {
+      Write-Host (T 'Installert, men ikke klar enn{a} - se fail-linjene i steg 4.') -ForegroundColor Yellow
     }
     Say "$run              ta heisen" DarkGray
     Say "$run -Status      hvor er heisen" DarkGray
@@ -390,32 +403,34 @@ $heisInstallReady = & {
     Say "$run -Doctor      hvis noe er galt" DarkGray
     Say "$run -Uninstall   fjern alt igjen" DarkGray
     if ($wantPath -and (Get-Process -Id $PID).SessionId -eq 0) {
-        # The PATH broadcast cannot cross from session 0 to the desktop.
-        Say 'heis virker i nye SSH-{o}kter n{a}. P{a} skrivebordet: logg av og p{a} f{o}rst.' DarkGray
+      # The PATH broadcast cannot cross from session 0 to the desktop.
+      Say 'heis virker i nye SSH-{o}kter n{a}. P{a} skrivebordet: logg av og p{a} f{o}rst.' DarkGray
     }
 
     # The block's only pipeline output: whether the setup is ready.
     $healthy
-}
-if (-not (@($heisInstallReady)[-1])) {
+  }
+  if (-not (@($heisInstallReady)[-1])) {
     # Installed, but -Doctor found something it could not fix. Not an error
     # worth a red line - the report is already on screen - but automation
     # should not read it as success.
     $global:LASTEXITCODE = 1
     if ($PSCommandPath) { exit 1 }
+  }
 }
-} catch {
-    $Host.UI.WriteErrorLine('')
-    $Host.UI.WriteErrorLine("Installasjonen stoppet: $($_.Exception.Message)")
-    Write-Host 'Hjelp: https://github.com/damsleth/heis#troubleshooting' -ForegroundColor DarkGray
-    $global:LASTEXITCODE = 1
-    # Only from a file. Under `irm | iex` there is none, and exit would close the
-    # user's whole shell - an SSH session included - on top of the failure.
-    if ($PSCommandPath) { exit 1 }
-} finally {
-    # Runs on exit too. Puts back a Process-scope Bypass set for the install,
-    # which under iex would otherwise outlive it in the user's own shell.
-    if ((Get-ExecutionPolicy -Scope Process) -ne $heisProcessPolicy) {
-        try { Set-ExecutionPolicy -Scope Process -ExecutionPolicy $heisProcessPolicy -Force } catch { }
-    }
+catch {
+  $Host.UI.WriteErrorLine('')
+  $Host.UI.WriteErrorLine("Installasjonen stoppet: $($_.Exception.Message)")
+  Write-Host 'Hjelp: https://github.com/damsleth/heis/blob/main/DOCS.md#troubleshooting' -ForegroundColor DarkGray
+  $global:LASTEXITCODE = 1
+  # Only from a file. Under `irm | iex` there is none, and exit would close the
+  # user's whole shell - an SSH session included - on top of the failure.
+  if ($PSCommandPath) { exit 1 }
+}
+finally {
+  # Runs on exit too. Puts back a Process-scope Bypass set for the install,
+  # which under iex would otherwise outlive it in the user's own shell.
+  if ((Get-ExecutionPolicy -Scope Process) -ne $heisProcessPolicy) {
+    try { Set-ExecutionPolicy -Scope Process -ExecutionPolicy $heisProcessPolicy -Force } catch { }
+  }
 }

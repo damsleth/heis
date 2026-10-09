@@ -2,8 +2,7 @@
 
 ## If you do not know what this does, it is not for you
 
-This automates a privilege-elevation prompt. That is a sentence worth reading
-twice. It is a small, boring tool with an unglamorous job, but it touches the
+This automates a privilege-elevation prompt. It is a small, boring tool with an unglamorous job, but it touches the
 part of a managed machine your security team cares most about, and running
 software you have not read against that is a bad habit whatever the software.
 
@@ -12,7 +11,7 @@ The whole thing is one PowerShell file, plus an installer. Read them first.
 ## What it actually does
 
 It starts `AdminByRequest.exe /Elevate` and clicks the buttons you would have
-clicked — `Yes`, then `OK` — by posting `BM_CLICK` to those specific controls.
+clicked (`Yes`, then `OK`) by posting `BM_CLICK` to those specific controls.
 Then it checks that the countdown window appeared, so it can tell you whether
 the elevator actually arrived rather than assuming it did.
 
@@ -71,7 +70,7 @@ and "nobody was told" are different conversations.
 
 **`irm … | iex` runs whatever the URL returns.** That is true of every
 install-by-pipe one-liner, and it means `heis.d0.si` is a dependency you are
-trusting. Read the file first if that bothers you — and it reasonably might:
+trusting. Read the file first if that bothers you, and it reasonably might:
 
 ```powershell
 irm https://heis.d0.si/Heis.ps1 -OutFile Heis.ps1   # then read it
