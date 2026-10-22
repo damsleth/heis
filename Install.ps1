@@ -241,7 +241,8 @@ try {
     Step 2 'Henter Heis.ps1'
 
     # Re-running is the update path, so default to wherever heis already is.
-    $defaultDir = Join-Path $env:LOCALAPPDATA 'Programs\Heis'
+    # No LOCALAPPDATA means not Windows (5.1 has no $IsWindows): use ~/.local/bin.
+    $defaultDir = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Programs\Heis' } else { Join-Path $HOME '.local/bin' }
     $existing = Get-Command 'heis.cmd' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($existing) { $defaultDir = Split-Path -Parent $existing.Source }
 

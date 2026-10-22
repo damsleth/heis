@@ -1018,7 +1018,8 @@ function Get-TextEncoding {
 # ------------------------------------------------------------------ path ---
 # The installer's default home for Heis.ps1. Ours entirely, so -Uninstall
 # removes the whole folder; anywhere else, only what heis wrote there.
-$script:InstallDirDefault = Join-Path $env:LOCALAPPDATA 'Programs\Heis'
+# No LOCALAPPDATA means not Windows (5.1 has no $IsWindows): use ~/.local/bin.
+$script:InstallDirDefault = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Programs\Heis' } else { Join-Path $HOME '.local/bin' }
 $script:ShimMarker        = 'heis-shim'
 
 # The user PATH, expanded, one directory per entry without a trailing slash.
