@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="no">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>heis — elevation, express service</title>
+<meta name="description" content="irm heis.d0.si/install.ps1 | iex — Admin By Request elevation in one line. No install, no admin rights, no stairs.">
+<style>
+  :root{
+    --bg:#0c0d10; --panel:#15171c; --panel2:#1c1f26; --line:#2a2e37;
+    --ink:#e8eaef; --dim:#9aa1ad; --faint:#6b7280;
+    --gold:#e8b64c; --gold-dim:#8a6d2a; --up:#57d98a; --red:#e26d6d;
+    --mono:"SFMono-Regular",ui-monospace,"JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.55;
+    background-image:radial-gradient(1200px 600px at 50% -200px,#1a1d24 0%,transparent 70%);}
+  a{color:var(--gold)}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 20px 80px}
+
+  /* ── header / floor indicator ── */
+  header{display:flex;align-items:center;gap:16px;padding-top:12px}
+  .indicator{
+    display:inline-flex;align-items:center;gap:10px;background:#08090b;border:1px solid var(--line);
+    border-radius:10px;padding:8px 14px;font-family:var(--mono);
+    box-shadow:inset 0 0 24px rgba(232,182,76,.06);}
+  .arrow{color:var(--up);font-size:20px;line-height:1;animation:bob 1.6s ease-in-out infinite}
+  @keyframes bob{0%,100%{transform:translateY(1px)}50%{transform:translateY(-3px)}}
+  .floor{color:var(--gold);letter-spacing:.18em;font-weight:600;font-size:15px}
+  .brand{margin-left:auto;font-family:var(--mono);color:var(--faint);font-size:13px}
+
+  h1{font-size:clamp(34px,7vw,60px);line-height:1.02;margin:34px 0 6px;letter-spacing:-.02em}
+  h1 .go{color:var(--gold)}
+  .sub{font-size:clamp(17px,2.6vw,21px);color:var(--dim);margin:0 0 30px;max-width:52ch}
+
+  /* ── the one line ── */
+  .console{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;
+    box-shadow:0 30px 60px -30px rgba(0,0,0,.8)}
+  .console-bar{display:flex;align-items:center;gap:8px;padding:11px 15px;background:var(--panel2);
+    border-bottom:1px solid var(--line)}
+  .dot{width:11px;height:11px;border-radius:50%}
+  .dot.r{background:#e2685f}.dot.y{background:#e8b64c}.dot.g{background:#57d98a}
+  .console-title{margin-left:8px;font-family:var(--mono);font-size:12px;color:var(--faint)}
+  .cmd{display:flex;align-items:center;gap:14px;padding:22px 20px;font-family:var(--mono);
+    font-size:clamp(14px,2.5vw,19px);overflow-x:auto}
+  .prompt{color:var(--gold);user-select:none}
+  .cmd code{color:var(--ink);white-space:nowrap;cursor:pointer;-webkit-user-select:all;user-select:all;
+    border-radius:5px;padding:2px 4px;margin:-2px -4px;transition:background .15s}
+  .cmd code:hover{background:rgba(232,182,76,.10)}
+  .cmd code.sel{background:rgba(232,182,76,.16);box-shadow:inset 0 0 0 1px var(--gold-dim)}
+  .cmd .pipe{color:var(--faint)}
+  .cmd .iex{color:var(--up)}
+  button.copy{margin-left:auto;flex:0 0 auto;background:var(--gold);color:#1a1204;border:0;
+    border-radius:8px;padding:9px 15px;font-family:var(--sans);font-weight:700;font-size:13px;
+    cursor:pointer;transition:transform .08s,background .15s}
+  button.copy:hover{background:#f2c766}
+  button.copy:active{transform:scale(.96)}
+  button.copy.done{background:var(--up);color:#06210f}
+
+  .out{padding:0 20px 20px;font-family:var(--mono);font-size:clamp(13px,2.3vw,17px)}
+  .out .ret{color:var(--up)}
+  .out .clk{color:var(--gold)}
+  .caption{color:var(--faint);font-size:13px;margin:12px 2px 0;font-family:var(--mono)}
+  .kbd{font-family:var(--mono);font-weight:600;color:var(--ink);background:var(--panel2);
+    border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-size:.92em}
+
+  .reqs{display:flex;gap:16px;align-items:flex-start;margin:20px 0 0;padding:16px 18px;
+    background:linear-gradient(180deg,rgba(232,182,76,.07),rgba(232,182,76,.02));
+    border:1px solid var(--gold-dim);border-radius:12px}
+  .reqs-badge{flex:0 0 auto;align-self:center;font-family:var(--mono);font-size:11px;letter-spacing:.12em;
+    text-transform:uppercase;color:#1a1204;background:var(--gold);border-radius:6px;padding:5px 10px;font-weight:700}
+  .reqs-body{color:var(--dim);font-size:14.5px}
+  .reqs-body b{color:var(--ink);font-weight:600}
+  @media(max-width:520px){.reqs{flex-direction:column;gap:10px}}
+
+  /* ── selling points ── */
+  .points{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin:44px 0 8px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
+  .card .k{font-family:var(--mono);color:var(--gold);font-size:13px;letter-spacing:.04em}
+  .card .v{margin-top:6px;color:var(--dim);font-size:14.5px}
+
+  h2{font-size:23px;margin:52px 0 8px;letter-spacing:-.01em}
+  h2 .n{color:var(--gold-dim);font-family:var(--mono);font-size:16px;margin-right:10px}
+  p.lead{color:var(--dim);margin:0 0 16px;max-width:64ch}
+
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;
+    overflow-x:auto;font-family:var(--mono);font-size:14px;color:#d3d7df;margin:14px 0}
+  pre .c{color:var(--faint)}
+  pre .s{color:var(--gold)}
+  code.inl{font-family:var(--mono);background:var(--panel2);border:1px solid var(--line);
+    border-radius:5px;padding:1px 6px;font-size:.9em;color:#dfe3ea}
+
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14.5px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--faint);font-weight:600;font-family:var(--mono);font-size:12.5px;letter-spacing:.03em}
+  td code{font-family:var(--mono);color:var(--gold)}
+  td.note{color:var(--dim)}
+
+  .floors{display:flex;flex-direction:column;gap:0;margin:16px 0;border:1px solid var(--line);
+    border-radius:12px;overflow:hidden;background:var(--panel)}
+  .floors .fl{display:flex;align-items:center;gap:16px;padding:15px 18px;border-bottom:1px solid var(--line)}
+  .floors .fl:last-child{border-bottom:0}
+  .floors .btn{width:34px;height:34px;flex:0 0 auto;border-radius:50%;border:1px solid var(--gold-dim);
+    color:var(--gold);display:grid;place-items:center;font-family:var(--mono);font-size:13px;
+    background:radial-gradient(circle at 50% 35%,#2a2411,#15130c)}
+  .floors .fl.top .btn{background:radial-gradient(circle at 50% 35%,#3a3115,#1c180b);
+    box-shadow:0 0 14px rgba(232,182,76,.35);border-color:var(--gold)}
+  .floors .lbl b{color:var(--ink);font-weight:600}
+  .floors .lbl span{color:var(--faint);font-size:13.5px}
+
+  footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--line);color:var(--faint);
+    font-size:13.5px;font-family:var(--mono);display:flex;flex-wrap:wrap;gap:8px 20px;align-items:center}
+  footer a{color:var(--dim);text-decoration:none;border-bottom:1px solid var(--line)}
+  footer a:hover{color:var(--gold)}
+  .ding{color:var(--gold)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="indicator" title="heisen er oppe">
+      <span class="arrow">▲</span>
+      <span class="floor" id="floor">OPPE</span>
+    </div>
+    <div class="brand">heis&nbsp;·&nbsp;<span style="color:var(--faint)">Admin By Request, express</span></div>
+  </header>
+
+  <h1><span class="go">Trykk</span> én knapp.<br>Rett til topps.</h1>
+  <p class="sub">Admin-elevering i én linje. Ingen installasjon, ingen agent,
+    ingen admin-rettigheter, ingen trapp. Bare heisen.</p>
+
+  <div class="console">
+    <div class="console-bar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="console-title">PowerShell — trykk for etasje</span>
+    </div>
+    <div class="cmd">
+      <span class="prompt">PS&gt;</span>
+      <code id="oneliner" title="Klikk for å merke, så Ctrl+C">irm heis.d0.si/install.ps1 <span class="pipe">|</span> <span class="iex">iex</span></code>
+      <button class="copy" id="copy">Merk</button>
+    </div>
+    <div class="out">
+      <span class="ret">→</span> <span class="clk">heisen er oppe</span> - <span id="ctr">05:59:59</span> igjen
+    </div>
+  </div>
+  <p class="caption" id="cap">Klikk kommandoen for å merke den, så <b class="kbd">Ctrl</b>+<b class="kbd">C</b>. Kjør den i en PowerShell hvor som helst — på skrivebordet eller over SSH. Cold start: ~1 sekund.</p>
+
+  <div class="reqs">
+    <span class="reqs-badge">før du trykker</span>
+    <div class="reqs-body">
+      <b>Heisen går bare i den bygningen den er montert i.</b> Kjør den på en Windows
+      <b>Cloud PC</b> (Windows 365 / AVD) der <b>Admin By Request</b> allerede er installert —
+      det er dialogene den klikker seg gjennom. Uten ABR er det ingen heis å hente,
+      bare en tom sjakt.
+    </div>
+  </div>
+
+  <div class="points">
+    <div class="card"><div class="k">0 avhengigheter</div><div class="v">Én fil. Ingen AutoHotkey, ingen agent å holde i live, ingenting å rydde etterpå.</div></div>
+    <div class="card"><div class="k">0 admin-rettigheter</div><div class="v">Trenger ikke være admin for å be om å bli det. Det er liksom hele poenget.</div></div>
+    <div class="card"><div class="k">Ingen tilkobling</div><div class="v">Funker med RDP koblet fra og skjermen mørk. Dialogene styres med vindusmeldinger, ikke mus.</div></div>
+    <div class="card"><div class="k">Session 0 → topp</div><div class="v">Fra SSH som ikke ser skrivebordet, heiser den seg selv inn i den interaktive sesjonen.</div></div>
+  </div>
+
+  <h2><span class="n">1</span>Hva den gjør</h2>
+  <p class="lead">Starter Admin By Request med <code class="inl">/Elevate</code> og klikker seg gjennom
+    dialogene for deg — «Yes», så «OK» — og verifiserer at nedtellingen faktisk startet før den
+    melder tilbake. Ikke gjett, sjekk. Så vet du at heisen faktisk kom opp.</p>
+
+  <h2><span class="n">2</span>Flere etasjer</h2>
+  <p class="lead"><code class="inl">| iex</code> kan ikke sende argumenter — den slipper deg bare av
+    i første etasje (elevér). Vil du til en annen knapp, lag en script-blokk:</p>
+<pre><span class="c"># hent kilden én gang, kall den med hvilken knapp du vil</span>
+$h = <span class="s">'https://heis.d0.si/install.ps1'</span>
+&amp; ([scriptblock]::Create((irm $h))) <span class="s">-Status</span>    <span class="c"># hvilken etasje står vi i?</span>
+&amp; ([scriptblock]::Create((irm $h))) <span class="s">-Finish</span>    <span class="c"># kjør heisen ned, avslutt økta</span></pre>
+
+  <p class="lead">Eller last den ned og kjør den som en helt vanlig fil:</p>
+<pre>.\Heis-Standalone.ps1              <span class="c"># elevér, om du ikke alt er oppe</span>
+.\Heis-Standalone.ps1 -Status      <span class="c"># rapportér og gå ut</span>
+.\Heis-Standalone.ps1 -Finish      <span class="c"># kjør ned</span>
+.\Heis-Standalone.ps1 -Uninstall   <span class="c"># fjern relé-oppgaven den registrerer</span></pre>
+
+  <h2><span class="n">3</span>Etasjeoversikt</h2>
+  <p class="lead">Det heisen kan melde tilbake — hver knapp har sin etasje:</p>
+  <table>
+    <tr><th>knapp</th><th>heisen sier</th></tr>
+    <tr><td><code>(elevér)</code></td><td class="note">heisen er oppe - 05:59:59 igjen</td></tr>
+    <tr><td><code>-Status</code></td><td class="note">heisen går allerede - 05:12:03 igjen</td></tr>
+    <tr><td><code>-Finish</code></td><td class="note">heisen er nede</td></tr>
+    <tr><td><code>-Status</code></td><td class="note">ikke elevert</td></tr>
+  </table>
+
+  <h2><span class="n">4</span>Hvordan den kommer opp</h2>
+  <p class="lead">En SSH-shell lander i session 0 — kjelleren, uten skjerm. Ingenting den gjør
+    når frem til skrivebordet. Så heisen tar en omvei:</p>
+  <div class="floors">
+    <div class="fl top"><div class="btn">▲</div><div class="lbl"><b>Interaktiv sesjon</b><br><span>Reléet fyrer, klikker gjennom dialogene med vindusmeldinger. Ingen mus å flytte — funker mørklagt.</span></div></div>
+    <div class="fl"><div class="btn">·</div><div class="lbl"><b>Planlagt oppgave</b><br><span>Registreres første gang. Broen over sesjonsgrensen som vindushåndtak ikke krysser.</span></div></div>
+    <div class="fl"><div class="btn">0</div><div class="lbl"><b>Session 0 — SSH</b><br><span>Her starter du. Ser ikke skrivebordet. Trykker på knappen likevel.</span></div></div>
+  </div>
+  <p class="lead">Eneste krav: at en interaktiv sesjon finnes. Den kan være frakoblet, men noen
+    må ha logget inn siden forrige omstart. Skriver en kopi til <code class="inl">%LOCALAPPDATA%\Heis</code>,
+    fordi reléet trenger en fil på disk å peke på.</p>
+
+  <footer>
+    <span class="ding">♪ ding ♪</span>
+    <a href="/install.ps1">install.ps1</a>
+    <a href="https://github.com/damsleth/heis">github.com/damsleth/heis</a>
+    <span style="margin-left:auto">heisen er oppe.</span>
+  </footer>
+
+</div>
+
+<script>
+  // Select-only, no scripted clipboard write. A JS copy of `irm ... | iex` is
+  // exactly what uBlock Origin's ClickFix defence blocks — and rightly so. We
+  // let the user copy it themselves: click selects the command, they press
+  // Ctrl+C. What you copy is what you see.
+  const btn = document.getElementById('copy');
+  const line = document.getElementById('oneliner');
+  const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+  const combo = isMac ? '⌘C' : 'Ctrl+C';
+
+  function selectLine() {
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(line);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    line.classList.add('sel');
+    btn.textContent = 'trykk ' + combo;
+    btn.classList.add('done');
+  }
+  function reset() {
+    line.classList.remove('sel');
+    btn.textContent = 'Merk';
+    btn.classList.remove('done');
+  }
+
+  btn.addEventListener('click', selectLine);
+  line.addEventListener('click', selectLine);
+  document.addEventListener('selectionchange', () => {
+    if (window.getSelection().toString().indexOf('install.ps1') === -1) reset();
+  });
+
+  // ticking countdown, because an elevator that isn't moving is just a closet
+  let secs = 5 * 3600 + 59 * 60 + 59;
+  const ctr = document.getElementById('ctr');
+  setInterval(() => {
+    if (secs <= 0) { secs = 6 * 3600; }
+    secs--;
+    const h = String(Math.floor(secs / 3600)).padStart(2, '0');
+    const m = String(Math.floor((secs % 3600) / 60)).padStart(2, '0');
+    const s = String(secs % 60).padStart(2, '0');
+    ctr.textContent = h + ':' + m + ':' + s;
+  }, 1000);
+</script>
+</body>
+</html>
